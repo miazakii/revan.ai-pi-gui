@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="id">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>pi gui</title>
+		<link rel="icon" href="data:," />
+		<link rel="stylesheet" href="/style.css" />
+	</head>
+	<body>
+		<header class="topbar">
+			<button id="sidebar-toggle" class="icon" title="Sesi &amp; tree">☰</button>
+			<span class="brand">π</span>
+			<input id="cwd" class="cwd" spellcheck="false" title="Workspace (Enter untuk pindah)" />
+			<select id="model" title="Model"></select>
+			<select id="thinking" title="Thinking level"></select>
+			<span id="status" class="status">menyambung…</span>
+			<div class="actions">
+				<button id="new-session" title="Sesi baru">baru</button>
+				<button id="compact" title="Ringkas konteks">compact</button>
+				<button id="export" title="Export sesi ke HTML">export</button>
+				<button id="abort" class="danger" title="Hentikan run + kosongkan queue">stop</button>
+			</div>
+		</header>
+
+		<div class="shell">
+			<aside id="sidebar" class="sidebar hidden">
+				<div class="side-head">
+					<button class="side-tab active" data-tab="sessions">sesi</button>
+					<button class="side-tab" data-tab="tree">tree</button>
+					<button id="sidebar-close" class="icon" title="Tutup">✕</button>
+				</div>
+				<div id="side-body" class="side-body"></div>
+				<div class="side-actions">
+					<button id="side-new-project" title="Buat proyek baru untuk mengelompokkan sesi">+ proyek</button>
+					<button id="side-clone" title="Duplikat branch aktif ke sesi baru">clone</button>
+					<button id="side-rename" title="Beri nama sesi aktif">rename</button>
+					<button id="side-refresh" title="Muat ulang">muat ulang</button>
+				</div>
+			</aside>
+			<main id="transcript" class="transcript"></main>
+		</div>
+
+		<footer class="composer">
+			<div id="banner" class="banner hidden" role="alert" aria-live="polite" aria-atomic="true">
+				<span id="banner-text"></span>
+				<button id="banner-action" class="primary"></button>
+				<button id="banner-close" class="ghost" title="Tutup" aria-label="Tutup pesan">✕</button>
+			</div>
+			<div id="queue" class="queue"></div>
+			<div id="ext-widget" class="ext-widget"></div>
+			<div id="attachments" class="attachments"></div>
+			<div id="slash" class="slash hidden"></div>
+			<textarea id="input" rows="3" placeholder="Tanya sesuatu…  (Enter kirim · Shift+Enter baris baru · Esc stop · / untuk command)"></textarea>
+			<div class="composer-actions">
+				<select id="behavior" title="Perilaku saat agent sedang berjalan">
+					<option value="followUp">follow-up</option>
+					<option value="steer">steer</option>
+				</select>
+				<span id="stats" class="stats"></span>
+				<button id="send" class="primary">kirim</button>
+			</div>
+		</footer>
+
+		<div id="modal" class="modal hidden"></div>
+		<div id="toasts" class="toasts"></div>
+
+		<script src="/vendor/marked.min.js"></script>
+		<script src="/vendor/marked-cjk-friendly.min.js"></script>
+		<script src="/vendor/highlight.min.js"></script>
+		<script type="module" src="/app.js"></script>
+	</body>
+</html>

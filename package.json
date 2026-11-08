@@ -1,0 +1,16 @@
+{
+	"name": "pi-gui",
+	"version": "0.1.0",
+	"private": true,
+	"type": "module",
+	"description": "GUI web pi (React + Vite + shadcn/ui) lewat RPC mode",
+	"scripts": {
+		"start": "node server.mjs",
+		"dev": "node --watch server.mjs",
+		"dev:frontend": "npm --prefix frontend run dev",
+		"build": "npm --prefix frontend run build"
+	},
+	"engines": {
+		"node": ">=20"
+	}
+}
