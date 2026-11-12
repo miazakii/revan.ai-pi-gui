@@ -50,9 +50,55 @@
 	--radius-4xl: calc(var(--radius) * 2.6);
 }
 
-:root,
-.dark {
+:root {
 	--radius: 0.75rem;
+	color-scheme: light;
+
+	--background: #fff8f5;
+	--foreground: #2a1e1b;
+	--card: #ffffff;
+	--card-foreground: #2a1e1b;
+	--popover: #ffffff;
+	--popover-foreground: #2a1e1b;
+	--primary: #FA8072;
+	--primary-foreground: #2b0f0c;
+	--secondary: #ffe9e4;
+	--secondary-foreground: #4a1f19;
+	--muted: #f6eeec;
+	--muted-foreground: #7a6a66;
+	--accent: #ffe3dd;
+	--accent-foreground: #4a1f19;
+	--destructive: #dc2626;
+	--destructive-foreground: #ffffff;
+	--border: #eadfd9;
+	--input: #e6d8d3;
+	--ring: #FA8072;
+	--chart-1: #FA8072;
+	--chart-2: #f59e0b;
+	--chart-3: #14b8a6;
+	--chart-4: #8b5cf6;
+	--chart-5: #ec4899;
+	--sidebar: #fff3ef;
+	--sidebar-foreground: #3d2a26;
+	--sidebar-primary: #FA8072;
+	--sidebar-primary-foreground: #2b0f0c;
+	--sidebar-accent: #ffe3dd;
+	--sidebar-accent-foreground: #4a1f19;
+	--sidebar-border: #f0dfda;
+	--sidebar-ring: #FA8072;
+
+	--scrollbar-thumb: #d9c8c3;
+	--tool-text: #3d2f2c;
+	--link: #c2413b;
+	--code-bg: #f8fafc;
+	--code-border: #e2e8f0;
+	--code-head-bg: #eef2f7;
+	--code-head-fg: #64748b;
+	--code-text: #1e293b;
+}
+
+.dark {
+	color-scheme: dark;
 	--background: #0b0d11;
 	--foreground: #e7e9ee;
 	--card: #11141a;
@@ -85,6 +131,15 @@
 	--sidebar-accent-foreground: #e7e9ee;
 	--sidebar-border: #232831;
 	--sidebar-ring: #7aa2f7;
+
+	--scrollbar-thumb: #2f3642;
+	--tool-text: #c9d1e0;
+	--link: #7aa2f7;
+	--code-bg: #0a0d12;
+	--code-border: #262b34;
+	--code-head-bg: #14171c;
+	--code-head-fg: #8b93a1;
+	--code-text: #c9d1e0;
 }
 
 @layer base {
@@ -112,7 +167,7 @@
 
 	* {
 		scrollbar-width: thin;
-		scrollbar-color: #2f3642 transparent;
+		scrollbar-color: var(--scrollbar-thumb) transparent;
 	}
 
 	*::-webkit-scrollbar {
@@ -121,7 +176,7 @@
 	}
 
 	*::-webkit-scrollbar-thumb {
-		background: #2f3642;
+		background: var(--scrollbar-thumb);
 		border: 2px solid transparent;
 		border-radius: 999px;
 		background-clip: content-box;
@@ -130,6 +185,23 @@
 	*::-webkit-scrollbar-track {
 		background: transparent;
 	}
+}
+
+/* --------------------------------------------------------------------- logo */
+
+.logo-mask {
+	background-color: currentColor;
+	-webkit-mask-image: url("/miazaki-logo.png");
+	mask-image: url("/miazaki-logo.png");
+	-webkit-mask-repeat: no-repeat;
+	mask-repeat: no-repeat;
+	-webkit-mask-position: left center;
+	mask-position: left center;
+	-webkit-mask-size: contain;
+	mask-size: contain;
+	-webkit-mask-mode: alpha;
+	mask-mode: alpha;
+	aspect-ratio: 312 / 46;
 }
 
 /* ------------------------------------------------------------------ markdown */
@@ -212,7 +284,7 @@
 }
 
 .md a {
-	color: var(--primary);
+	color: var(--link);
 	text-decoration: underline;
 	text-underline-offset: 2px;
 }
@@ -234,10 +306,10 @@
 }
 
 .md .code {
-	border: 1px solid var(--border);
+	border: 1px solid var(--code-border);
 	border-radius: 0.75rem;
 	overflow: hidden;
-	background: #0a0d12;
+	background: var(--code-bg);
 }
 
 .code-head {
@@ -246,10 +318,10 @@
 	align-items: center;
 	gap: 0.5rem;
 	padding: 0.35rem 0.75rem;
-	background: var(--card);
-	border-bottom: 1px solid var(--border);
+	background: var(--code-head-bg);
+	border-bottom: 1px solid var(--code-border);
 	font-size: 0.6875rem;
-	color: var(--muted-foreground);
+	color: var(--code-head-fg);
 	font-family: var(--font-mono);
 }
 
@@ -259,12 +331,12 @@
 	background: transparent;
 	border: 1px solid transparent;
 	border-radius: 0.35rem;
-	color: var(--muted-foreground);
+	color: var(--code-head-fg);
 }
 
 .code-head .copy:hover {
-	color: var(--foreground);
-	border-color: var(--border);
+	color: #e7e9ee;
+	border-color: var(--code-border);
 }
 
 .md pre {
@@ -320,12 +392,12 @@
 /* ------------------------------------------------------------- highlight.js */
 
 .hljs {
-	color: #c9d1e0;
+	color: var(--code-text);
 }
 
 .hljs-comment,
 .hljs-quote {
-	color: #5d6573;
+	color: #7f8899;
 	font-style: italic;
 }
 
@@ -394,11 +466,11 @@
 	font-family: var(--font-mono);
 	font-size: 0.75rem;
 	line-height: 1.5;
-	border: 1px solid var(--border);
+	border: 1px solid var(--code-border);
 	border-radius: 0.6rem;
 	overflow: auto;
 	max-height: 24rem;
-	background: #0a0d12;
+	background: var(--code-bg);
 	padding: 0.25rem 0;
 }
 
@@ -431,7 +503,7 @@
 	overflow: auto;
 	white-space: pre-wrap;
 	word-break: break-word;
-	color: #c9d1e0;
+	color: var(--tool-text);
 }
 
 .think-body {
@@ -451,6 +523,32 @@
 }
 
 /* ------------------------------------------------------------------- misc */
+
+.remote-image {
+	display: inline-flex;
+	max-width: 100%;
+	align-items: center;
+	gap: 0.35rem;
+	border: 1px dashed var(--border);
+	border-radius: 0.5rem;
+	background: var(--muted);
+	padding: 0.4rem 0.65rem;
+	color: var(--muted-foreground);
+	font-size: 0.75rem;
+	text-align: left;
+}
+
+.remote-image:hover {
+	border-color: var(--primary);
+	color: var(--foreground);
+}
+
+.md-remote-loaded {
+	max-width: 100%;
+	border-radius: 0.6rem;
+	border: 1px solid var(--border);
+	margin: 0.25rem 0;
+}
 
 .msg-image {
 	max-width: 100%;
@@ -503,3 +601,96 @@
 
 /* `.primary`/`.danger`/`.ghost` hanya dipakai sebagai penanda test lama; warna
    tombol sepenuhnya diatur varian shadcn. */
+
+.composer {
+	padding-bottom: calc(0.75rem + env(safe-area-inset-bottom));
+}
+
+.drop-active {
+	outline: 2px dashed var(--primary);
+	outline-offset: -6px;
+	background: color-mix(in oklab, var(--primary) 8%, var(--background));
+}
+
+/* Hormati preferensi pengguna yang sensitif terhadap animasi. */
+@media (prefers-reduced-motion: reduce) {
+	*,
+	*::before,
+	*::after {
+		animation-duration: 0.01ms !important;
+		animation-iteration-count: 1 !important;
+		transition-duration: 0.01ms !important;
+		scroll-behavior: auto !important;
+	}
+
+	.live-cursor {
+		animation: none;
+	}
+}
+
+/* Light mode code, diff, dan syntax highlight (dark mode tetap Tokyo Night). */
+:root:not(.dark) .code-head .copy:hover {
+	color: #0f172a;
+}
+
+:root:not(.dark) .hljs-comment,
+:root:not(.dark) .hljs-quote {
+	color: #64748b;
+}
+
+:root:not(.dark) .hljs-keyword,
+:root:not(.dark) .hljs-selector-tag,
+:root:not(.dark) .hljs-literal,
+:root:not(.dark) .hljs-section,
+:root:not(.dark) .hljs-doctag {
+	color: #7c3aed;
+}
+
+:root:not(.dark) .hljs-string,
+:root:not(.dark) .hljs-attr,
+:root:not(.dark) .hljs-regexp,
+:root:not(.dark) .hljs-addition,
+:root:not(.dark) .hljs-template-tag {
+	color: #15803d;
+}
+
+:root:not(.dark) .hljs-number,
+:root:not(.dark) .hljs-symbol,
+:root:not(.dark) .hljs-bullet,
+:root:not(.dark) .hljs-variable,
+:root:not(.dark) .hljs-template-variable {
+	color: #b45309;
+}
+
+:root:not(.dark) .hljs-title,
+:root:not(.dark) .hljs-name,
+:root:not(.dark) .hljs-selector-id,
+:root:not(.dark) .hljs-selector-class,
+:root:not(.dark) .hljs-function .hljs-title {
+	color: #1d4ed8;
+}
+
+:root:not(.dark) .hljs-type,
+:root:not(.dark) .hljs-built_in,
+:root:not(.dark) .hljs-class .hljs-title,
+:root:not(.dark) .hljs-params {
+	color: #0e7490;
+}
+
+:root:not(.dark) .hljs-meta,
+:root:not(.dark) .hljs-deletion,
+:root:not(.dark) .hljs-tag {
+	color: #be123c;
+}
+
+:root:not(.dark) .diff-line.add {
+	color: #166534;
+}
+
+:root:not(.dark) .diff-line.del {
+	color: #be123c;
+}
+
+:root:not(.dark) .diff-line.ctx {
+	color: #64748b;
+}

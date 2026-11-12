@@ -10,7 +10,7 @@ Browser  ──SSE (event) + POST (command)──►  server.mjs  ──JSONL st
 ## Jalankan
 
 ```bash
-cd ~/pi-gui
+cd ~/Documents/pi/pi-project/pi-gui
 npm install --prefix frontend
 npm run build
 npm start
@@ -22,7 +22,7 @@ Setelah `frontend/dist` dibuat, menjalankan `npm start`/`node server.mjs` tidak 
 Untuk development UI dengan hot reload:
 
 ```bash
-cd ~/pi-gui
+cd ~/Documents/pi/pi-project/pi-gui
 npm run dev            # terminal 1: backend di :4789
 npm run dev:frontend   # terminal 2: Vite di :5173, proxy /api ke :4789
 # buka http://127.0.0.1:5173/#t=<token-dari-backend>
@@ -40,8 +40,8 @@ proses pi di-restart dengan cwd baru).
 | `PI_GUI_STATE_DIR` | `~/.pi/pi-gui` | folder token + `projects.json` (berguna untuk tes terisolasi) |
 
 Token disimpan di `~/.pi/pi-gui/token` (mode `0600`) supaya URL tetap sama antar-restart,
-lalu ditempel di fragment (`#t=`) agar tidak ikut ke server/Referer. Query lama `?t=` masih
-diterima. Token juga disimpan di `sessionStorage`, jadi refresh tetap jalan. Kalau env
+lalu ditempel di fragment (`#t=`) agar tidak ikut ke server/Referer. Mulai versi ini token
+**hanya** diterima lewat fragment atau `sessionStorage`; query `?t=` tidak lagi dipakai. Token juga disimpan di `sessionStorage`, jadi refresh tetap jalan. Kalau env
 `PI_GUI_TOKEN` diisi, nilai itu yang dipakai dan token file diabaikan; server mencetak peringatan
 saat sumbernya env.
 
@@ -53,14 +53,14 @@ muncul di query string dan status 401 bisa ditangani.
 **1. Nyalakan server** (dari terminal mana pun):
 
 ```bash
-cd ~/pi-gui && node server.mjs
+cd ~/Documents/pi/pi-project/pi-gui && node server.mjs
 ```
 
 **2. Buka URL yang dicetak**, contoh `http://127.0.0.1:4789/#t=b509…`. Token stabil antar-restart;
 kalau ingin memakai token sendiri:
 
 ```bash
-PI_GUI_TOKEN="$(openssl rand -hex 16)" node ~/pi-gui/server.mjs   # token acak, bukan `pi`
+PI_GUI_TOKEN="$(openssl rand -hex 16)" node ~/Documents/pi/pi-project/pi-gui/server.mjs   # token acak, bukan `pi`
 ```
 
 **3. Pilih workspace.** Default `$HOME`. Ketik path lain di kolom `cwd` lalu Enter — proses pi
@@ -71,32 +71,44 @@ bekerja:
 
 | Aksi | Cara |
 |---|---|
-| Hentikan run | tombol `stop` atau `Esc` di kotak input (sekaligus mengosongkan queue dan mengembalikan teksnya ke editor) |
+| Hentikan run | tombol `stop` (toolbar atau composer) atau `Esc` dari mana saja (sekaligus mengosongkan queue dan mengembalikan teksnya ke editor) |
 | Sisipkan instruksi baru | pilih `steer`, lalu kirim |
 | Antre pesan setelah selesai | pilih `follow-up`, lalu kirim |
 | Lihat args/output tool | klik kartu tool (`bash`, `read`, `edit`, …) |
 | Lihat diff | kartu `edit`/`write` — badge `+n −m`, output mentah di dalamnya |
-| Lihat proses berpikir | buka `thinking (n char)` |
+| Lihat proses berpikir | buka `thinking · n char (~n token)` |
 | Command/skill/template | ketik `/`, pilih dengan `↑` `↓` + `Enter` |
-| Kirim screenshot | `⌘V` di kotak input, atau drag & drop gambar |
+| Kirim screenshot | `⌘V` di kotak input, atau drag & drop gambar (otomatis dikompresi, maks. 12 gambar) |
+| Salin / fork pesan | hover pesan user atau assistant, lalu pakai tombol di pojok |
+| Lompat ke pesan terbaru | tombol `pesan terbaru` saat sedang scroll ke atas |
 
 **5. Sidebar** (tombol panel di kiri atas):
 
-- tab **sesi** — semua sesi di workspace ini; klik untuk pindah. `fork` menandai sesi hasil fork.
+- tab **sesi** — semua sesi di workspace ini; klik untuk pindah, atau ketik di kolom **Cari sesi**
+  untuk memfilter nama/preview/id. Ada tombol urutkan **terbaru/nama**, pin sesi, dan jumlah pesan. `fork` menandai sesi hasil fork. Menu `⋯` pada tiap sesi berisi
+  pindah proyek, salin path, dan hapus — jadi pengelompokan tetap bisa dipakai di HP tanpa drag.
   Tombol `rename` di bawah sidebar memberi nama sesi aktif (`set_session_name`). Tombol `×`
-  di setiap sesi non-aktif menghapus file sesi setelah konfirmasi; sesi aktif tidak bisa dihapus.
+  menghapus file sesi setelah konfirmasi; sesi aktif tidak bisa dihapus.
   Tombol `pilih` mengaktifkan mode pilih-banyak: centang beberapa sesi (atau `pilih semua`), lalu
   `hapus (n)` untuk menghapus semuanya sekaligus. `batal` keluar dari mode pilih.
 - **proyek** — tombol `+ proyek` membuat kelompok bernama. Tarik sesi (pegangan titik-titik di kiri baris)
-  ke header/isi proyek untuk memindahkannya; tarik ke **tanpa proyek** untuk melepas. Proyek bisa
-  diganti nama (ikon pensil) atau dihapus (ikon tempat sampah) — file sesi tidak ikut terhapus. Klik header untuk
-  melipat/membuka grup (status disimpan di `localStorage`).
+  ke header/isi proyek, atau pakai menu `⋯ → pindah ke proyek` (ramah sentuh). Tarik ke **tanpa proyek**
+  untuk melepas. Proyek bisa diganti nama (ikon pensil) atau dihapus (ikon tempat sampah) — file sesi
+  tidak ikut terhapus. Klik header untuk melipat/membuka grup (status disimpan di `localStorage`).
 - tab **tree** — percabangan sesi aktif; klik pesan **user** untuk fork dari titik itu (teks pesan
   otomatis masuk ke editor), tombol `clone` untuk menduplikat branch sekarang.
 
-**6. Toolbar kanan atas:** `baru` (sesi baru), `compact` (ringkas konteks), `export` (simpan
-HTML), `stop` (hentikan run + kosongkan queue). Pemilih model & thinking level ada di sebelah
-kolom `cwd`.
+**6. Toolbar kanan atas:** `baru` (sesi baru), `compact` (ringkas konteks), `export` (HTML; path bisa
+disalin dari dialog), `stop` (hentikan run + kosongkan queue). Pemilih model & thinking level ada
+di sebelah kolom `cwd`; di layar kecil semuanya ada di tombol **pengaturan** (ikon slider). Di sheet
+pengaturan juga ada export Markdown/JSON, workspace browser, shortcut, dan izin notifikasi selesai.
+
+**Shortcut:** `Enter` kirim, `Shift+Enter` baris baru, `Esc` hentikan run dari mana saja,
+`⌘/Ctrl+B` buka/tutup sidebar, `⌘/Ctrl+K` command palette, `⌘/Ctrl+F` cari di transcript, `?` bantuan.
+
+**Konfirmasi aman:** pindah sesi, sesi baru, ganti workspace, dan hapus sesi akan meminta
+konfirmasi jika agent masih berjalan. Tombol stop otomatis nonaktif saat idle. Jika konteks
+mencapai 80%, composer menampilkan peringatan + tombol `compact`.
 
 **7. Matikan** dengan `Ctrl+C` di terminal server.
 
@@ -106,13 +118,20 @@ model tersimpan; GUI memakai config `.pi` yang sama.
 ## Fitur
 
 - tampilan baru berbasis **shadcn/ui** (Button, Input, Native Select, Dialog/Alert Dialog, Sidebar, Tabs, Collapsible, Command, Sonner, Badge, Card, Alert, Empty)
-- streaming teks + indikator thinking, tool call/result sebagai kartu yang bisa dibuka
+- **logo MIAZAKI** memakai mask CSS, jadi warna otomatis mengikuti tema (terang/gelap)
+- label tombol memakai Title Case (mis. **Kirim**, **Clone**, **Rename**, **Hapus Proyek**)
+- **pemilih tema Terang / Gelap / Sistem** (disimpan di `localStorage`); light mode memakai accent **#FA8072** (salmon)
+- streaming teks + thinking live (collapsed), tool call/result sebagai kartu; tool berjalan menampilkan spinner + elapsed time; output tool bisa disalin
 - **Markdown GFM penuh** (tabel, task list, strikethrough) + **syntax highlight** (highlight.js) + tombol copy per blok kode
 - **diff viewer** untuk `edit`/`write` (badge `+n −m`, output mentah tetap tersedia)
-- **lampiran gambar**: paste (⌘V) atau drag & drop ke composer, terkirim sebagai `ImageContent`
+- **lampiran gambar**: paste (⌘V) atau drag & drop ke composer, dikompresi otomatis (maks. 2000px/4,5 MB per gambar, 12 gambar), terkirim sebagai `ImageContent`
 - **menu slash command** (`/`) dari `get_commands`: extension commands, prompt template, skill
-- **sidebar**: daftar sesi workspace (klik untuk pindah), **pengelompokan proyek + drag & drop**, dan tree sesi aktif (klik pesan user untuk fork)
-- fork / clone / hapus sesi non-aktif, rename sesi aktif (`set_session_name`), pemilih model, thinking level, abort, queue steer/follow-up, compaction, export HTML
+- **sidebar**: daftar sesi workspace dengan **pencarian**, **pengelompokan proyek + drag & drop/menu sentuh**, dan tree sesi aktif (klik pesan user untuk fork)
+- fork / clone / hapus sesi non-aktif (**soft-delete + urungkan**), rename sesi aktif maupun non-aktif, pin sesi, pemilih model (nama + context window), thinking level, abort, queue steer/follow-up, compaction, export HTML/Markdown/JSON
+- aksi per pesan: salin jawaban/pesan, fork dari pesan user, lompat ke pesan terbaru, lightbox gambar; pencarian transcript (`⌘/Ctrl+F`) dengan navigasi hasil; transcript memakai `role=log` + `aria-live`
+- tema menghormati `prefers-reduced-motion`; code block punya palet terang/gelap; aset statis dikirim dengan ETag + gzip/brotli dan cache immutable untuk file ber-hash
+- command palette (`⌘/Ctrl+K`) dan dialog bantuan (`?`); notifikasi browser saat run selesai di tab background; peringatan bila GUI terbuka di beberapa tab
+- trash hapus sesi otomatis dibersihkan setelah 7 hari; workspace picker lewat `/api/dirs`
 - riwayat sesi dipulihkan lewat `get_messages` (sesi persisten, sama seperti CLI)
 - dialog extension (`select` / `confirm` / `input` / `editor`), `notify`, `setStatus`, `setWidget`
 - footer token/context/cost dari `get_session_stats`
@@ -123,12 +142,15 @@ model tersimpan; GUI memakai config `.pi` yang sama.
 |---|---|
 | `server.mjs` | spawn pi, framing JSONL, korelasi `id`, SSE, auth token, static server, daftar/hapus sesi, proyek (metadata GUI) |
 | `frontend/src/App.jsx` | state cermin React, event SSE, command RPC, sidebar, proyek, lampiran, slash menu |
-| `frontend/src/components/` | komponen aplikasi: `TopBar`, `AppSidebar`, `Transcript`, `Composer`, `Modal`, `Markdown` |
+| `frontend/src/components/` | komponen aplikasi: `TopBar`, `AppSidebar`, `Transcript`, `Composer`, `Modal`, `ThemeMenu`, `Logo`, `Markdown` |
 | `frontend/src/components/ui/` | komponen shadcn/ui hasil generate (Button, Dialog, Sidebar, Command, Sonner, dll.) |
-| `frontend/src/styles.css` | entry Tailwind v4 + token theme shadcn (dark), style Markdown, highlight.js, dan diff |
+| `frontend/src/styles.css` | entry Tailwind v4 + token theme shadcn (light/dark), style Markdown, highlight.js, dan diff |
 | `frontend/components.json` | konfigurasi shadcn: JSX (`tsx: false`), Tailwind v4, alias `@/*` |
 | `frontend/src/lib/utils.js` | helper `cn` (re-export dari paket `cn`) |
 | `frontend/src/hooks/use-mobile.js` | hook responsif untuk Sidebar |
+| `frontend/src/components/ThemeMenu.jsx` | dropdown Terang/Gelap/Sistem memakai `next-themes` |
+| `frontend/public/theme-init.js` | menerapkan tema tersimpan sebelum React mount (anti-flash) |
+| `frontend/public/miazaki-logo.png` | wordmark MIAZAKI transparan untuk mask CSS |
 | `frontend/public/vendor/` | `marked`, `marked-cjk-friendly`, `highlight.js` (disalin dari paket pi, MIT/BSD) |
 | `frontend/dist/` | hasil build React yang dilayani `server.mjs` |
 | `public/` | fallback frontend vanilla lama (dipakai hanya jika `frontend/dist` belum ada) |
@@ -136,19 +158,27 @@ model tersimpan; GUI memakai config `.pi` yang sama.
 | `session-test.mjs` | tes sidebar: daftar sesi, tree, fork, clone, switch, rename, nama sesi besar, hapus sesi (satuan & massal), proyek (create/assign/rename/delete/persistensi), `details.diff` |
 | `render-check.mjs` | render headless via CDP Chrome: DOM, console/CSP error, prompt dari UI, stop/queue, rename, hapus, hapus massal, fork, proyek + drag & drop |
 
+Logo MIAZAKI memakai `frontend/public/miazaki-logo.png` sebagai CSS mask di `.logo-mask`, sehingga
+warnanya mengikuti `text-foreground` (gelap di light mode, terang di dark mode). Ganti class itu ke
+`text-primary` bila ingin logo memakai accent tema.
+
 ```bash
 node smoke-test.mjs "Balas satu kata: OK"
 node session-test.mjs
 node render-check.mjs "http://127.0.0.1:4789/#t=<token>" "Balas satu kata: OK"
 PI_GUI_TEST_FORK=1 node render-check.mjs "http://127.0.0.1:4789/#t=<token>"
 PI_GUI_TEST_UI=1 node render-check.mjs "http://127.0.0.1:4789/#t=<token>"   # slash + paste gambar
+PI_GUI_TEST_THEME=1 node render-check.mjs "http://127.0.0.1:4789/#t=<token>" # light/dark + accent
 PI_GUI_TEST_XSS=1 node render-check.mjs "http://127.0.0.1:4789/#t=<token>"  # sanitasi markdown
 PI_GUI_TEST_STOP=1 node render-check.mjs "http://127.0.0.1:4789/#t=<token>" # stop + queue
 PI_GUI_TEST_RENAME=1 node render-check.mjs "http://127.0.0.1:4789/#t=<token>" # rename sesi
 PI_GUI_TEST_DELETE=1 PI_GUI_TEST_DELETE_NAME=sesi-hapus-ui node render-check.mjs "http://127.0.0.1:4789/#t=<token>"
 PI_GUI_TEST_MULTI_DELETE=1 node render-check.mjs "http://127.0.0.1:4789/#t=<token>" # pilih banyak + hapus
 PI_GUI_TEST_PROJECTS=1 node render-check.mjs "http://127.0.0.1:4789/#t=<token>" # proyek + drag-drop
+PI_GUI_TEST_MOBILE=1 node render-check.mjs "http://127.0.0.1:4789/#t=<token>" # viewport 390 + sheet + search
 ```
+
+`npm run check` menjalankan syntax check server/test + build frontend (dipakai CI).
 
 Catatan: server berjalan di Node ≥ 20, tetapi `render-check.mjs` memakai `WebSocket` global sehingga
 butuh Node ≥ 22. Set `CHROME_BIN` kalau Chrome tidak ada di path default macOS. Tes memakai
@@ -217,8 +247,8 @@ diserialkan). Bentuknya:
 - Endpoint: `GET /api/projects`; `POST /api/projects` dengan `action` = `create` (`name`, `dir`),
   `rename` (`projectId`, `name`), `delete` (`projectId`), atau `assign` (`sessionPath`, `projectId`
   atau `null`). Endpoint ini memakai auth + cek origin yang sama dengan endpoint lain.
-- `sessionPath` harus path `.jsonl` absolut. Assignment ke file yang sudah tidak ada dibersihkan
-  saat `GET`, dan ikut dihapus ketika sesi dihapus lewat `/api/sessions/delete`.
+- `sessionPath` harus path `.jsonl` absolut. Assignment disimpan saat sesi di-soft-delete agar
+  bisa dipulihkan lewat `/api/sessions/restore`.
 - Hapus proyek **tidak** menghapus file sesi; sesi kembali ke “tanpa proyek”.
 
 UI: drag & drop memakai HTML5 DnD (mouse-only). Selama drag, refresh sidebar ditunda supaya
@@ -231,13 +261,17 @@ node target tidak dibangun ulang di tengah operasi.
 - Token dibuat sekali dan disimpan di `~/.pi/pi-gui/token` (`0600`), dikirim lewat fragment URL +
   header `Authorization`. Event stream juga lewat `fetch` + header. Jangan memakai token lemah
   seperti `pi` lewat `PI_GUI_TOKEN`; nilai env selalu menang atas token file.
-- Hapus sesi hanya untuk file `.jsonl` non-aktif di folder sesi; path di luar folder dan sesi
-  aktif selalu ditolak.
+- Hapus sesi hanya untuk file `.jsonl` non-aktif di folder sesi; file dipindah ke samping sebagai
+  `.trash-…` (bisa diurungkan lewat `/api/sessions/restore`, dibersihkan otomatis setelah 7 hari).
+  Path di luar folder dan sesi aktif selalu ditolak.
+- Rename sesi non-aktif memvalidasi folder sesi lalu menambahkan entry `session_info`; rename sesi
+  aktif memakai RPC `set_session_name`.
+- `/api/dirs` (auth) dipakai workspace browser; hanya mengembalikan daftar folder.
 - `projects.json` hanya berisi metadata (path sesi + nama proyek), ditulis `0600`; endpoint
   `/api/projects` menolak path relatif/non-`.jsonl` dan proyek yang tidak dikenal.
 - Header keamanan: CSP (`script-src 'self'`, `connect-src 'self'`), `nosniff`, `DENY` frame,
   `no-referrer`, dan `Permissions-Policy` minimal.
-- Aset statis publik (tidak berisi rahasia); token hanya menjaga `/api/*`.
+- Aset statis publik (tidak berisi rahasia); token hanya menjaga `/api/*`. Query `?t=` tidak lagi diterima.
 - Markdown: HTML mentah di-escape (tokenizer `html`/`tag` dimatikan, seperti export HTML pi),
   URL disaring allow-list (`http`, `https`, `mailto`, `data:image/*`); URL protocol-relative
   (`//host`, `\\host`) dan skema berbahaya ditolak. Jadi `<script>` atau `[x](javascript:…)`
@@ -247,11 +281,15 @@ node target tidak dibangun ulang di tengah operasi.
 
 ## Sengaja belum ada (kandidat lanjutan)
 
-- Multi-tab / multi-sesi paralel: satu child pi per tab (sekarang satu child per server).
+- Multi-tab masih berbagi satu child pi; GUI hanya menampilkan peringatan di sheet pengaturan.
 - Reload halaman saat run aktif masih hanya menampilkan history final + delta sisa; reconnect SSE
   tidak menghapus live yang sudah tampil, tetapi reload tidak punya buffer tersebut.
-- Proyek: hanya drag & drop (belum ada pilihan “pindah ke proyek” lewat keyboard/menu), dan urutan
-  proyek belum bisa diubah (selalu urutan pembuatan).
+- Proyek: drag & drop untuk desktop dan menu `⋯ → pindah ke proyek` untuk sentuh; urutan proyek
+  masih urutan pembuatan.
+- Virtualisasi transcript penuh dan PWA/offline shell belum ada. PWA sengaja ditunda karena token
+  ada di fragment URL/sessionStorage, sehingga `start_url` instalasi tidak otomatis membawa token.
+- Queue per-item belum bisa dihapus satu-satu; pi hanya menyediakan `clear_queue`.
+- Lint/format belum ditambahkan; CI saat ini menjalankan `npm run check`.
 
 ## Referensi
 

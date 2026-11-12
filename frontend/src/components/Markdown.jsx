@@ -6,5 +6,25 @@ export default function MarkdownBlock({ source, allowAuto = true, className = "m
 		() => renderMarkdownHtml(source, { allowAuto }),
 		[source, allowAuto],
 	);
-	return <div className={className} dangerouslySetInnerHTML={{ __html: html }} />;
+	const loadRemoteImage = (event) => {
+		const button = event.target.closest?.("[data-remote-src]");
+		if (!button) return;
+		const source = button.getAttribute("data-remote-src");
+		if (!source) return;
+		const image = document.createElement("img");
+		image.src = source;
+		image.alt = button.textContent.replace(/^Muat gambar eksternal:\s*/, "");
+		image.className = "md-remote-loaded";
+		image.loading = "lazy";
+		image.referrerPolicy = "no-referrer";
+		button.replaceWith(image);
+	};
+
+	return (
+		<div
+			className={className}
+			onClick={loadRemoteImage}
+			dangerouslySetInnerHTML={{ __html: html }}
+		/>
+	);
 }

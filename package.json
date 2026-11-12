@@ -8,7 +8,8 @@
 		"start": "node server.mjs",
 		"dev": "node --watch server.mjs",
 		"dev:frontend": "npm --prefix frontend run dev",
-		"build": "npm --prefix frontend run build"
+		"build": "npm --prefix frontend run build",
+		"check": "node --check server.mjs && node --check render-check.mjs && node --check session-test.mjs && node --check smoke-test.mjs && npm --prefix frontend run build"
 	},
 	"engines": {
 		"node": ">=20"

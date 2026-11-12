@@ -20,11 +20,12 @@ import {
 	readFileSync,
 	writeFileSync,
 } from "node:fs";
-import { mkdir, open, readdir, readFile, realpath, rename, stat, unlink, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, open, readdir, readFile, realpath, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { homedir } from "node:os";
 import { basename, dirname, extname, isAbsolute, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { brotliCompressSync, gzipSync } from "node:zlib";
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const REACT_DIST = join(ROOT, "frontend", "dist");
@@ -97,6 +98,10 @@ const DIALOG_METHODS = new Set(["select", "confirm", "input", "editor"]);
 const CLEAR_UI_COMMANDS = new Set(["abort", "switch_session", "new_session", "fork", "clone"]);
 
 const log = (...args) => console.error("[pi-gui]", ...args);
+
+if (tokenSource === "env" && TOKEN.length < 24) {
+	log("peringatan: PI_GUI_TOKEN pendek; gunakan minimal 24 karakter acak");
+}
 
 const SECURITY_HEADERS = {
 	"content-security-policy": [
@@ -358,6 +363,8 @@ async function readSessionSummary(file, size, mtimeMs) {
 		let header = null;
 		let name = null;
 		let preview = null;
+		let messageCount = 0;
+		let model = null;
 
 		const apply = (line, fromTail) => {
 			if (!line) return;
@@ -374,6 +381,13 @@ async function readSessionSummary(file, size, mtimeMs) {
 			if (entry.type === "session_info") {
 				// Nama kosong adalah perintah menghapus nama, jadi jangan diabaikan.
 				name = typeof entry.name === "string" ? entry.name : "";
+			}
+			if (!fromTail && entry.type === "model_change") {
+				model = `${entry.provider}/${entry.modelId}`;
+			}
+			if (!fromTail && entry.type === "message" && entry.message?.role !== "system") {
+				messageCount += 1;
+				if (entry.message?.model) model = entry.message.model;
 			}
 			if (!fromTail && !preview && entry.type === "message" && entry.message?.role === "user") {
 				preview =
@@ -412,12 +426,36 @@ async function readSessionSummary(file, size, mtimeMs) {
 			}
 		}
 
-		const summary = { header, name, preview };
+		const summary = {
+			header,
+			name,
+			preview,
+			messageCount,
+			model,
+			partial: size > SUMMARY_BYTES,
+		};
 		summaryCache.set(file, { size, mtimeMs, summary });
 		if (summaryCache.size > 200) summaryCache.delete(summaryCache.keys().next().value);
 		return summary;
 	} finally {
 		await handle.close();
+	}
+}
+
+const TRASH_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+async function cleanupTrash(dir) {
+	try {
+		const names = await readdir(dir);
+		for (const name of names) {
+			if (!name.includes(".jsonl.trash-")) continue;
+			const full = join(dir, name);
+			const info = await stat(full).catch(() => null);
+			if (!info || Date.now() - info.mtimeMs < TRASH_TTL_MS) continue;
+			await unlink(full).catch(() => {});
+		}
+	} catch {
+		/* folder sesi belum ada */
 	}
 }
 
@@ -433,6 +471,9 @@ async function listSessions() {
 		names = await readdir(dir);
 	} catch {
 		return { dir, sessions: [] };
+	}
+	if (names.some((name) => name.includes(".jsonl.trash-"))) {
+		void cleanupTrash(dir);
 	}
 
 	const files = await Promise.all(
@@ -464,7 +505,11 @@ async function listSessions() {
 	const sessions = await Promise.all(
 		selected.map(async ({ full, mtime, size }) => {
 			try {
-				const { header, name, preview } = await readSessionSummary(full, size, mtime);
+				const { header, name, preview, messageCount, model, partial } = await readSessionSummary(
+					full,
+					size,
+					mtime,
+				);
 				if (!header) return null; // bukan file sesi pi yang valid
 				return {
 					path: full,
@@ -473,6 +518,10 @@ async function listSessions() {
 					parentSession: header?.parentSession ?? null,
 					name: full === sessionFile ? (currentName ?? name ?? null) : (name ?? null),
 					preview: preview ?? null,
+					messageCount,
+					messageCountPartial: Boolean(partial),
+					model: model ?? null,
+					size,
 					mtime,
 					current: full === sessionFile,
 				};
@@ -495,6 +544,10 @@ let projectsWrite = Promise.resolve();
 const emptyProjects = () => ({ version: 1, projects: [], assignments: {} });
 
 function cleanProjectName(value) {
+	return typeof value === "string" ? value.replace(/\s+/g, " ").trim().slice(0, PROJECT_NAME_MAX) : "";
+}
+
+function cleanSessionName(value) {
 	return typeof value === "string" ? value.replace(/\s+/g, " ").trim().slice(0, PROJECT_NAME_MAX) : "";
 }
 
@@ -595,10 +648,10 @@ function tokenMatches(value) {
 	return timingSafeEqual(actual, expected);
 }
 
-function authorized(req, url) {
+function authorized(req) {
 	const header = req.headers.authorization ?? "";
 	const bearer = header.startsWith("Bearer ") ? header.slice(7) : "";
-	return tokenMatches(bearer) || tokenMatches(url.searchParams.get("t") ?? "");
+	return tokenMatches(bearer);
 }
 
 /** Hanya izinkan POST dari origin loopback; Host juga harus loopback (anti DNS rebinding). */
@@ -634,7 +687,24 @@ const MIME = {
 	".woff2": "font/woff2",
 };
 
-async function serveStatic(res, pathname) {
+const COMPRESSIBLE = new Set([".html", ".js", ".css", ".json", ".svg", ".txt", ".map"]);
+const compressedCache = new Map();
+
+function compressed(body, encoding, key) {
+	const cacheKey = `${key}:${encoding}`;
+	const cached = compressedCache.get(cacheKey);
+	if (cached) {
+		compressedCache.delete(cacheKey);
+		compressedCache.set(cacheKey, cached);
+		return cached;
+	}
+	const value = encoding === "br" ? brotliCompressSync(body) : gzipSync(body);
+	compressedCache.set(cacheKey, value);
+	if (compressedCache.size > 80) compressedCache.delete(compressedCache.keys().next().value);
+	return value;
+}
+
+async function serveStatic(req, res, pathname) {
 	const rel = pathname === "/" ? "index.html" : pathname.replace(/^\/+/, "");
 	const file = resolve(PUBLIC, rel);
 	if (file !== PUBLIC && !file.startsWith(PUBLIC + sep)) {
@@ -642,12 +712,43 @@ async function serveStatic(res, pathname) {
 		return;
 	}
 	try {
-		const body = await readFile(file);
+		const info = await stat(file);
+		const etag = `W/"${info.size.toString(16)}-${Math.floor(info.mtimeMs).toString(16)}"`;
+		const hashed = rel.startsWith("assets/");
+		const cacheControl = hashed
+			? "public, max-age=31536000, immutable"
+			: rel.startsWith("vendor/")
+				? "public, max-age=86400"
+				: "no-cache";
+		if (req.headers["if-none-match"] === etag) {
+			res.writeHead(304, { etag, "cache-control": cacheControl });
+			res.end();
+			return;
+		}
+
+		let body = await readFile(file);
+		const ext = extname(file).toLowerCase();
+		const accept = String(req.headers["accept-encoding"] ?? "").toLowerCase();
+		const encoding = COMPRESSIBLE.has(ext) && body.length > 1024
+			? accept.includes("br")
+				? "br"
+				: accept.includes("gzip")
+					? "gzip"
+					: null
+			: null;
+		if (encoding) {
+			body = compressed(body, encoding, `${file}:${info.size}:${Math.floor(info.mtimeMs)}`);
+		}
+
 		res.writeHead(200, {
-			"content-type": MIME[extname(file)] ?? "application/octet-stream",
-			"cache-control": "no-cache",
+			"content-type": MIME[ext] ?? "application/octet-stream",
+			"cache-control": cacheControl,
+			etag,
+			vary: "accept-encoding",
+			"content-length": body.length,
+			...(encoding ? { "content-encoding": encoding } : {}),
 		});
-		res.end(body);
+		res.end(req.method === "HEAD" ? undefined : body);
 	} catch {
 		res.writeHead(404, { "content-type": "text/plain; charset=utf-8" }).end("not found");
 	}
@@ -923,12 +1024,13 @@ const server = createServer(async (req, res) => {
 				prepared.push({ target, realTarget });
 			}
 
-			const projects = await loadProjects();
-			let dirty = false;
 			const deleted = [];
+			const trashed = [];
 			for (const { target, realTarget } of prepared) {
+				const trashPath = `${target}.trash-${Date.now()}-${randomBytes(3).toString("hex")}`;
 				try {
-					await unlink(target);
+					// Soft delete: file dipindah ke samping agar bisa diurungkan.
+					await rename(target, trashPath);
 				} catch (error) {
 					failed.push({
 						path: target,
@@ -939,16 +1041,9 @@ const server = createServer(async (req, res) => {
 				}
 				summaryCache.delete(target);
 				summaryCache.delete(realTarget);
-				// Jangan tinggalkan assignment ke file yang sudah hilang.
-				for (const key of [target, realTarget]) {
-					if (projects.assignments[key]) {
-						delete projects.assignments[key];
-						dirty = true;
-					}
-				}
 				deleted.push(target);
+				trashed.push({ path: target, trashPath });
 			}
-			if (dirty) await saveProjects();
 
 			const batch = Array.isArray(body?.paths);
 			if (!batch && deleted.length === 0) {
@@ -959,9 +1054,178 @@ const server = createServer(async (req, res) => {
 			return sendJson(res, 200, {
 				ok: deleted.length > 0,
 				deleted,
+				trashed,
 				failed,
 				...(deleted.length === 1 ? { path: deleted[0] } : {}),
 			});
+		}
+
+		if (pathname === "/api/sessions/restore" && req.method === "POST") {
+			if (!authorized(req)) return sendJson(res, 401, { error: "unauthorized" });
+			if (!sameOrigin(req)) return sendJson(res, 403, { error: "origin ditolak" });
+			if (!isJson(req)) return sendJson(res, 415, { error: "content-type harus application/json" });
+			let body;
+			try {
+				body = JSON.parse(await readBody(req));
+			} catch {
+				return sendJson(res, 400, { error: "JSON tidak valid" });
+			}
+			const rawList = Array.isArray(body?.paths)
+				? body.paths
+				: typeof body?.trashPath === "string"
+					? [body.trashPath]
+					: [];
+			const requested = [
+				...new Set(
+					rawList
+						.filter((item) => typeof item === "string")
+						.map((item) => item.trim())
+						.filter(Boolean),
+				),
+			];
+			if (requested.length === 0) return sendJson(res, 400, { error: "trashPath wajib" });
+
+			let sessionFile;
+			try {
+				const state = await send({ type: "get_state" }, 15_000);
+				sessionFile = state?.data?.sessionFile ?? null;
+			} catch {
+				return sendJson(res, 503, { error: "agent pi tidak tersedia" });
+			}
+			if (!sessionFile) return sendJson(res, 400, { error: "sesi aktif belum punya file" });
+
+			const dir = resolve(dirname(sessionFile));
+			const failed = [];
+			const restored = [];
+			for (const requestedPath of requested) {
+				const trashPath = resolve(requestedPath);
+				const match = /^(.*\.jsonl)\.trash-\d+-[a-f0-9]+$/.exec(trashPath);
+				if (!match || dirname(trashPath) !== dir) {
+					failed.push({ path: requestedPath, error: "bukan file trash sesi" });
+					continue;
+				}
+				const target = resolve(match[1]);
+				if (dirname(target) !== dir) {
+					failed.push({ path: requestedPath, error: "path di luar folder sesi" });
+					continue;
+				}
+				try {
+					await stat(target);
+					failed.push({ path: requestedPath, error: "file tujuan sudah ada" });
+					continue;
+				} catch {
+					/* target belum ada, lanjut */
+				}
+				try {
+					await rename(trashPath, target);
+				} catch (error) {
+					failed.push({
+						path: requestedPath,
+						error: error?.code === "ENOENT" ? "trash tidak ditemukan" : String(error?.message ?? error),
+					});
+					continue;
+				}
+				summaryCache.delete(target);
+				restored.push(target);
+			}
+			return sendJson(res, 200, { ok: restored.length > 0, restored, failed });
+		}
+
+		if (pathname === "/api/sessions/rename" && req.method === "POST") {
+			if (!authorized(req)) return sendJson(res, 401, { error: "unauthorized" });
+			if (!sameOrigin(req)) return sendJson(res, 403, { error: "origin ditolak" });
+			if (!isJson(req)) return sendJson(res, 415, { error: "content-type harus application/json" });
+			let body;
+			try {
+				body = JSON.parse(await readBody(req));
+			} catch {
+				return sendJson(res, 400, { error: "JSON tidak valid" });
+			}
+			const rawPath = typeof body?.path === "string" ? body.path.trim() : "";
+			const name = cleanSessionName(body?.name ?? "");
+			if (!rawPath) return sendJson(res, 400, { error: "path sesi wajib" });
+
+			let sessionFile;
+			try {
+				const state = await send({ type: "get_state" }, 15_000);
+				sessionFile = state?.data?.sessionFile ?? null;
+			} catch {
+				return sendJson(res, 503, { error: "agent pi tidak tersedia" });
+			}
+			if (!sessionFile) return sendJson(res, 400, { error: "sesi aktif belum punya file" });
+
+			const dir = resolve(dirname(sessionFile));
+			const target = resolve(rawPath);
+			if (dirname(target) !== dir || extname(target) !== ".jsonl") {
+				return sendJson(res, 400, { error: "path sesi tidak valid" });
+			}
+			const realTarget = await realpath(target).catch(() => null);
+			if (!realTarget) return sendJson(res, 404, { error: "sesi tidak ditemukan" });
+			const realDir = await realpath(dir).catch(() => null);
+			if (realDir && dirname(realTarget) !== realDir) {
+				return sendJson(res, 400, { error: "path di luar folder sesi" });
+			}
+
+			if (target === resolve(sessionFile)) {
+				try {
+					const response = await send({ type: "set_session_name", name }, 15_000);
+					if (!response?.success) {
+						return sendJson(res, 400, { error: response?.error ?? "rename gagal" });
+					}
+				} catch (error) {
+					return sendJson(res, 503, { error: String(error?.message ?? error) });
+				}
+			} else {
+				let lastId = null;
+				try {
+					const text = await readFile(realTarget, "utf8");
+					const lines = text.split("\n").filter(Boolean);
+					for (let index = lines.length - 1; index >= 0; index -= 1) {
+						try {
+							const entry = JSON.parse(lines[index]);
+							if (entry?.id) {
+								lastId = entry.id;
+								break;
+							}
+						} catch {
+							/* baris terpotong */
+						}
+					}
+					const entry = {
+						type: "session_info",
+						id: randomBytes(4).toString("hex"),
+						parentId: lastId,
+						timestamp: new Date().toISOString(),
+						name,
+					};
+					await appendFile(realTarget, `${JSON.stringify(entry)}\n`);
+				} catch (error) {
+					return sendJson(res, 500, { error: String(error?.message ?? error) });
+				}
+				summaryCache.delete(target);
+				summaryCache.delete(realTarget);
+			}
+			return sendJson(res, 200, { ok: true, path: target, name });
+		}
+
+		if (pathname === "/api/dirs" && req.method === "GET") {
+			if (!authorized(req)) return sendJson(res, 401, { error: "unauthorized" });
+			const requested = url.searchParams.get("path") || cwd;
+			const dir = resolve(requested);
+			const info = await stat(dir).catch(() => null);
+			if (!info?.isDirectory()) return sendJson(res, 400, { error: "bukan folder" });
+			let entries = [];
+			try {
+				entries = await readdir(dir, { withFileTypes: true });
+			} catch (error) {
+				return sendJson(res, 400, { error: String(error?.message ?? error) });
+			}
+			const dirs = entries
+				.filter((entry) => entry.isDirectory())
+				.map((entry) => entry.name)
+				.sort((a, b) => a.localeCompare(b, "id", { sensitivity: "base" }))
+				.slice(0, 300);
+			return sendJson(res, 200, { path: dir, parent: dirname(dir), dirs });
 		}
 
 		if (pathname === "/api/info" && req.method === "GET") {
@@ -969,10 +1233,10 @@ const server = createServer(async (req, res) => {
 			return sendJson(res, 200, { cwd, pid: child?.pid ?? null, error: agentError });
 		}
 
-		if (req.method !== "GET") return sendJson(res, 405, { error: "method" });
+		if (req.method !== "GET" && req.method !== "HEAD") return sendJson(res, 405, { error: "method" });
 		// Aset statis publik: tidak berisi rahasia. Token hanya menjaga /api/*.
-		// Token dibaca frontend React dari fragment (#t=) atau query lama (?t=).
-		return serveStatic(res, pathname);
+		// Token dibaca frontend React dari fragment (#t=).
+		return serveStatic(req, res, pathname);
 	} catch (error) {
 		log("request gagal:", error);
 		if (!res.headersSent) sendJson(res, 500, { error: String(error?.message ?? error) });

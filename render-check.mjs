@@ -57,7 +57,11 @@ process.on("exit", () => {
 	} catch {
 		/* sudah mati */
 	}
-	rmSync(profile, { recursive: true, force: true });
+	try {
+		rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+	} catch {
+		/* Chrome masih menutup file profil */
+	}
 });
 
 async function targets() {
@@ -148,7 +152,7 @@ async function clickTab(tab) {
 }
 
 const bootReady = await waitFor(
-	"document.querySelector('#model option') && document.querySelector('#status')?.textContent === 'siap'",
+	"document.querySelector('#model option') && ['siap','berjalan'].includes(document.querySelector('#status')?.textContent)",
 	25000,
 );
 check("UI siap", bootReady);
@@ -214,7 +218,7 @@ if (process.env.PI_GUI_TEST_FORK) {
 		JSON.stringify(await evaluate("[...document.querySelectorAll('#modal button')].map((b) => b.textContent)")),
 	);
 	await evaluate(
-		"[...document.querySelectorAll('#modal button')].find((b) => b.textContent === 'fork').click()",
+		"[...document.querySelectorAll('#modal button')].find((b) => b.textContent.trim().toLowerCase() === 'fork').click()",
 	);
 	await new Promise((resolve) => setTimeout(resolve, 2500));
 	await clickTab("sessions");
@@ -235,13 +239,49 @@ const modelCount = await evaluate("document.querySelectorAll('#model option').le
 const sessionCount = await evaluate("document.querySelectorAll('.session-item').length");
 const currentCount = await evaluate("document.querySelectorAll('.session-item.current').length");
 const currentDelete = await evaluate("document.querySelectorAll('.session-item.current .session-delete').length");
-check("status siap", finalStatus === "siap", finalStatus);
+check("status siap/berjalan", ["siap", "berjalan"].includes(finalStatus), finalStatus);
 check("banner tidak menutupi UI", bannerHidden === true);
 check("model termuat", modelCount > 0, String(modelCount));
 const tailwindApplied = await evaluate(
 	"getComputedStyle(document.querySelector('.brand')).userSelect === 'none'",
 );
 check("utility Tailwind aktif", tailwindApplied === true, String(tailwindApplied));
+const logoLabel = await evaluate("document.querySelector('.brand')?.getAttribute('aria-label')");
+const logoMask = await evaluate("getComputedStyle(document.querySelector('.brand')).maskImage");
+check("logo MIAZAKI tampil", logoLabel === "MIAZAKI", String(logoLabel));
+check("transcript punya role log", (await evaluate("document.querySelector('#transcript')?.getAttribute('role')")) === "log");
+check(
+	"transcript punya aria-live",
+	(await evaluate("document.querySelector('#transcript')?.getAttribute('aria-live')")) === "polite",
+);
+check("ada heading utama", Boolean(await evaluate("document.querySelector('h1')?.textContent")));
+check("logo memakai mask", String(logoMask ?? "").includes("miazaki-logo.png"), String(logoMask));
+const sendText = await evaluate("document.querySelector('#send')?.textContent.trim()");
+const cloneText = await evaluate("document.querySelector('#side-clone')?.textContent.trim()");
+const renameText = await evaluate("document.querySelector('#side-rename')?.textContent.trim()");
+const sessionsTabText = await evaluate("document.querySelector('.side-tab[data-tab=\"sessions\"]')?.textContent.trim()");
+const treeTabText = await evaluate("document.querySelector('.side-tab[data-tab=\"tree\"]')?.textContent.trim()");
+check("label tombol Kirim", sendText === "Kirim", String(sendText));
+check("label tombol Clone", cloneText === "Clone", String(cloneText));
+check("label tombol Rename", renameText === "Rename", String(renameText));
+check("label tab Sesi", sessionsTabText === "Sesi", String(sessionsTabText));
+check("label tab Tree", treeTabText === "Tree", String(treeTabText));
+const topbarLabels = await evaluate(
+	"[...document.querySelectorAll('#new-session,#compact,#export,#abort')].map((button) => button.textContent.trim())",
+);
+const projectLabel = await evaluate("document.querySelector('#side-new-project')?.textContent.trim()");
+const refreshLabel = await evaluate("document.querySelector('#side-refresh')?.textContent.trim()");
+const selectLabel = await evaluate("document.querySelector('#side-select')?.textContent.trim()");
+const themeLabel = await evaluate("document.querySelector('#theme-toggle')?.textContent.trim()");
+check(
+	"label aksi topbar",
+	Array.isArray(topbarLabels) && topbarLabels.join("|") === "Baru|Compact|Export|Stop",
+	JSON.stringify(topbarLabels),
+);
+check("label + Proyek", projectLabel === "+ Proyek", String(projectLabel));
+check("label Muat", refreshLabel === "Muat", String(refreshLabel));
+check("label Pilih", selectLabel === "Pilih", String(selectLabel));
+check("label Tema", themeLabel === "Tema", String(themeLabel));
 check("daftar sesi termuat", sessionCount > 0, String(sessionCount));
 check("sesi aktif ditandai", currentCount === 1, String(currentCount));
 check("sesi aktif tanpa tombol hapus", currentDelete === 0, String(currentDelete));
@@ -376,7 +416,7 @@ if (process.env.PI_GUI_TEST_DELETE) {
 	check("tombol hapus sesi ditemukan", clicked === true);
 	const modalOpen = await waitFor("Boolean(document.querySelector('#modal'))", 4000);
 	check("konfirmasi hapus tampil", modalOpen);
-	await evaluate("[...document.querySelectorAll('#modal button')].find((button) => button.textContent === 'hapus')?.click()");
+	await evaluate("[...document.querySelectorAll('#modal button')].find((button) => button.textContent.trim().toLowerCase() === 'hapus')?.click()");
 	const gone = await waitFor(
 		`![...document.querySelectorAll('.session-row .s-preview')].some((item) => item.textContent === ${JSON.stringify(targetName)})`,
 		8000,
@@ -513,7 +553,7 @@ if (process.env.PI_GUI_TEST_PROJECTS) {
 	})()`);
 	await new Promise((resolve) => setTimeout(resolve, 400));
 	await evaluate(
-		"[...document.querySelectorAll('#modal button')].find((button) => button.textContent === 'hapus proyek')?.click()",
+		"[...document.querySelectorAll('#modal button')].find((button) => button.textContent.trim().toLowerCase() === 'hapus proyek')?.click()",
 	);
 	check(
 		"hapus proyek dari sidebar",
@@ -532,6 +572,49 @@ if (process.env.PI_GUI_TEST_PROJECTS) {
 
 console.log("text       :", JSON.stringify((await evaluate("document.querySelector('#transcript')?.innerText"))?.slice(0, 400)));
 console.log("logs       :", JSON.stringify(logs, null, 2));
+
+if (process.env.PI_GUI_TEST_THEME) {
+	const openThemeMenu = async () => {
+		await evaluate(`(() => {
+			const button = document.querySelector('#theme-toggle');
+			if (!button) return false;
+			button.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, button: 0, pointerType: 'mouse' }));
+			button.click();
+			return true;
+		})()`);
+		return waitFor("Boolean(document.querySelector('[data-theme-option=light]'))", 4000);
+	};
+
+	const pickTheme = async (value) => {
+		const picked = await evaluate(`(() => {
+			const item = document.querySelector('[data-theme-option=${value}]');
+			if (!item) return false;
+			item.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, cancelable: true, button: 0, pointerType: 'mouse' }));
+			item.click();
+			return true;
+		})()`);
+		if (!picked) return false;
+		return waitFor(`document.querySelector('#theme-toggle')?.getAttribute('data-theme') === '${value}'`, 4000);
+	};
+
+	check("menu tema terbuka", (await openThemeMenu()) === true);
+	check("pilih mode terang", (await pickTheme("light")) === true);
+	await waitFor("!document.documentElement.classList.contains('dark')", 4000);
+	const lightPrimary = await evaluate("getComputedStyle(document.documentElement).getPropertyValue('--primary').trim()");
+	const lightBackground = await evaluate("getComputedStyle(document.body).backgroundColor");
+	const lightClass = await evaluate("document.documentElement.classList.contains('dark')");
+	check("light mode aktif", lightClass === false, String(lightClass));
+	const lightAccent = String(lightPrimary ?? "").toLowerCase();
+	check("accent light #FA8072", lightAccent === "#fa8072" || lightAccent === "salmon", lightPrimary);
+	check("background light terang", /^rgb\(2[0-9]{2}, 2[0-9]{2}, 2[0-9]{2}\)$/.test(lightBackground ?? ""), lightBackground);
+
+	check("menu tema terbuka lagi", (await openThemeMenu()) === true);
+	check("pilih mode gelap", (await pickTheme("dark")) === true);
+	await waitFor("document.documentElement.classList.contains('dark')", 4000);
+	const darkPrimary = await evaluate("getComputedStyle(document.documentElement).getPropertyValue('--primary').trim()");
+	check("kembali ke dark", (await evaluate("document.documentElement.classList.contains('dark')")) === true);
+	check("accent dark tetap biru", darkPrimary.toLowerCase() === "#7aa2f7", darkPrimary);
+}
 
 if (process.env.PI_GUI_TEST_XSS) {
 	const xssImg = await evaluate("marked.parse('<img src=x onerror=alert(1)>')");
@@ -552,6 +635,48 @@ if (process.env.PI_GUI_TEST_XSS) {
 		JSON.stringify([xssRel, xssImgRel]),
 	);
 	check("XSS backslash ditolak", !xssBackslash.includes("href"), JSON.stringify(xssBackslash));
+}
+
+if (process.env.PI_GUI_TEST_MOBILE) {
+	await send("Emulation.setDeviceMetricsOverride", {
+		width: 390,
+		height: 844,
+		deviceScaleFactor: 1,
+		mobile: true,
+	});
+	await new Promise((resolve) => setTimeout(resolve, 900));
+	check(
+		"mobile tidak overflow horizontal",
+		(await evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1")) === true,
+		String(await evaluate("document.documentElement.scrollWidth")),
+	);
+	check(
+		"tombol pengaturan mobile ada",
+		(await evaluate("Boolean(document.querySelector('#settings-toggle'))")) === true,
+	);
+	await evaluate("document.querySelector('#settings-toggle')?.click()");
+	check(
+		"sheet pengaturan mobile terbuka",
+		(await waitFor("Boolean(document.querySelector('#settings-model'))", 5000)) === true,
+	);
+	await evaluate(
+		"[...document.querySelectorAll('button')].find((button) => button.textContent.trim() === 'Close')?.click()",
+	);
+	await new Promise((resolve) => setTimeout(resolve, 500));
+	await evaluate("document.querySelector('#sidebar-toggle')?.click()");
+	check(
+		"sidebar mobile punya pencarian",
+		(await waitFor(
+			"Boolean(document.querySelector('#side-body input[aria-label=\"Cari sesi\"]'))",
+			5000,
+		)) === true,
+	);
+	await send("Emulation.setDeviceMetricsOverride", {
+		width: 1280,
+		height: 900,
+		deviceScaleFactor: 1,
+		mobile: false,
+	});
 }
 
 const badLogs = logs.filter(

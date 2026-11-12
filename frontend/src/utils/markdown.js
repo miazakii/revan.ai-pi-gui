@@ -85,7 +85,7 @@ if (markedLib) {
 			image(token) {
 				const href = sanitizeMarkdownUrl(token.href);
 				if (href === null) return escapeHtml(token.text || "");
-				let out = `<img src="${escapeHtml(href)}" alt="${escapeHtml(token.text || "")}"`;
+				let out = `<img src="${escapeHtml(href)}" alt="${escapeHtml(token.text || "")}" loading="lazy" decoding="async" referrerpolicy="no-referrer"`;
 				if (token.title) out += ` title="${escapeHtml(token.title)}"`;
 				return `${out}>`;
 			},
@@ -132,7 +132,7 @@ function mdFallback(text) {
 			i += 1;
 			out.push(
 				`<div class="code"><div class="code-head"><span>${escapeHtml(language)}</span>` +
-					`<button class="copy" data-copy>copy</button></div>` +
+					`<button class="copy" data-copy>Copy</button></div>` +
 					`<pre><code>${escapeHtml(body.join("\n"))}</code></pre></div>`,
 			);
 			continue;
@@ -193,6 +193,19 @@ function mdFallback(text) {
 	return out.join("\n");
 }
 
+function decorateRemoteImages(root) {
+	for (const image of root.querySelectorAll("img[src]")) {
+		const src = image.getAttribute("src") ?? "";
+		if (!/^https?:/i.test(src)) continue;
+		const button = document.createElement("button");
+		button.type = "button";
+		button.className = "remote-image";
+		button.dataset.remoteSrc = src;
+		button.textContent = `Muat gambar eksternal${image.alt ? `: ${image.alt}` : ""}`;
+		image.replaceWith(button);
+	}
+}
+
 function decorateCodeBlocks(root) {
 	for (const pre of root.querySelectorAll("pre")) {
 		if (pre.parentElement?.classList.contains("code")) continue;
@@ -205,7 +218,7 @@ function decorateCodeBlocks(root) {
 		const copy = document.createElement("button");
 		copy.className = "copy";
 		copy.dataset.copy = "";
-		copy.textContent = "copy";
+		copy.textContent = "Copy";
 		head.append(label, copy);
 		pre.replaceWith(wrap);
 		wrap.append(head, pre);
@@ -229,6 +242,7 @@ export function renderMarkdownHtml(source, { allowAuto = true } = {}) {
 		const holder = document.createElement("div");
 		holder.innerHTML = html;
 		decorateCodeBlocks(holder);
+		decorateRemoteImages(holder);
 		return holder.innerHTML;
 	} finally {
 		allowHighlightAuto = previous;

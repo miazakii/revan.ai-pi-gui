@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "cn";
 import {
+	ArrowDownWideNarrowIcon,
 	CheckIcon,
 	ChevronRightIcon,
 	CopyIcon,
@@ -9,8 +10,12 @@ import {
 	GripVerticalIcon,
 	ListChecksIcon,
 	MessageSquareIcon,
+	MoreHorizontalIcon,
 	PencilIcon,
+	PinIcon,
+	PinOffIcon,
 	RefreshCwIcon,
+	SearchIcon,
 	Trash2Icon,
 	XIcon,
 } from "lucide-react";
@@ -18,6 +23,15 @@ import {
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+	DropdownMenu,
+	DropdownMenuContent,
+	DropdownMenuItem,
+	DropdownMenuLabel,
+	DropdownMenuSeparator,
+	DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Input } from "@/components/ui/input";
 import {
 	Collapsible,
 	CollapsibleContent,
@@ -44,8 +58,27 @@ import {
 } from "@/components/ui/sidebar";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { contentText, relativeTime } from "../utils/format.js";
+import Logo from "./Logo.jsx";
 
 const COLLAPSE_KEY = "pi-gui-collapsed-projects";
+const PINS_KEY = "pi-gui-pins";
+
+function loadPins() {
+	try {
+		const raw = JSON.parse(localStorage.getItem(PINS_KEY) ?? "[]");
+		return new Set(Array.isArray(raw) ? raw.filter((item) => typeof item === "string") : []);
+	} catch {
+		return new Set();
+	}
+}
+
+function savePins(pins) {
+	try {
+		localStorage.setItem(PINS_KEY, JSON.stringify([...pins]));
+	} catch {
+		/* localStorage diblokir/penuh */
+	}
+}
 
 function loadCollapsedProjects() {
 	try {
@@ -97,10 +130,18 @@ function SessionRow({
 	selectMode,
 	selected,
 	onToggleSelect,
+	projects = [],
+	projectId = null,
+	onAssign,
+	onCopyPath,
+	onRename,
+	pinned = false,
+	onTogglePin,
 }) {
 	const dragging = draggingPath === session.path;
 	const selectable = Boolean(session.path) && !session.current;
 	const checked = Boolean(selectMode && selected);
+	const label = session.name || session.preview || session.id || "sesi";
 	return (
 		<SidebarMenuItem
 			className={cn(
@@ -123,10 +164,10 @@ function SessionRow({
 				isActive={Boolean(session.current)}
 				className={cn(
 					"session-item h-auto flex-col items-start gap-0.5 py-1.5",
-					!selectMode && "pr-7",
+					!selectMode && "pr-14",
 					session.current && "current",
 				)}
-				title={session.path}
+				title={`${session.path ?? ""}${session.model ? `\nmodel: ${session.model}` : ""}`}
 				disabled={selectMode && !selectable}
 				onClick={() => {
 					if (!selectMode) return onSwitch(session);
@@ -146,6 +187,7 @@ function SessionRow({
 							{checked ? <CheckIcon className="size-2.5" strokeWidth={3} /> : null}
 						</span>
 					) : null}
+					{pinned ? <PinIcon className="size-2.5 shrink-0 text-primary" aria-label="disematkan" /> : null}
 					<span className="truncate">
 						{session.name || session.preview || "(kosong)"}
 					</span>
@@ -153,26 +195,91 @@ function SessionRow({
 				<span className="s-meta flex w-full items-center gap-1 text-[10.5px] font-normal text-muted-foreground">
 					{selectMode ? null : <GripVerticalIcon className="size-3 shrink-0 opacity-40" />}
 					<span className="truncate">
-						{relativeTime(session.mtime)} · {(session.id ?? "").slice(0, 8)}
+						{relativeTime(session.mtime)}
+						{session.current ? " · aktif" : ""}
+						{session.messageCount
+							? ` · ${session.messageCount}${session.messageCountPartial ? "+" : ""} pesan`
+							: ""}
 					</span>
 					{session.parentSession ? (
-						<span className="fork shrink-0 text-primary">· fork</span>
+						<span className="fork shrink-0 text-rose-700 dark:text-primary">· fork</span>
 					) : null}
 				</span>
 			</SidebarMenuButton>
-			{!session.current && !selectMode ? (
-				<SidebarMenuAction
-					className="session-delete"
-					showOnHover
-					aria-label={`Hapus sesi ${session.name || session.preview || session.id}`}
-					title="Hapus sesi"
-					onClick={(event) => {
-						event.stopPropagation();
-						onDelete(session);
-					}}
-				>
-					<XIcon />
-				</SidebarMenuAction>
+			{!selectMode && session.path ? (
+				<>
+					<DropdownMenu>
+						<DropdownMenuTrigger asChild>
+							<SidebarMenuAction
+								className={cn("session-menu", !session.current ? "right-7" : "right-1")}
+								showOnHover
+								aria-label={`Aksi sesi ${label}`}
+								title="Aksi sesi"
+								onClick={(event) => event.stopPropagation()}
+							>
+								<MoreHorizontalIcon />
+							</SidebarMenuAction>
+						</DropdownMenuTrigger>
+						<DropdownMenuContent side="right" align="start" className="w-56">
+							<DropdownMenuLabel className="truncate">{label}</DropdownMenuLabel>
+							<DropdownMenuLabel className="text-[10px] font-normal text-muted-foreground">
+								Pindah ke Proyek
+							</DropdownMenuLabel>
+							<DropdownMenuItem
+								disabled={!projectId}
+								onSelect={() => onAssign?.(session.path, null)}
+							>
+								Tanpa Proyek
+							</DropdownMenuItem>
+							{projects.map((project) => (
+								<DropdownMenuItem
+									key={project.id}
+									onSelect={() => onAssign?.(session.path, project.id)}
+								>
+									<span className="min-w-0 flex-1 truncate">{project.name}</span>
+									{projectId === project.id ? <CheckIcon className="size-3.5" /> : null}
+								</DropdownMenuItem>
+							))}
+							<DropdownMenuSeparator />
+							<DropdownMenuItem onSelect={() => onRename?.(session)}>
+								<PencilIcon className="size-3.5" /> Ganti Nama
+							</DropdownMenuItem>
+							<DropdownMenuItem onSelect={() => onTogglePin?.(session)}>
+								{pinned ? (
+									<PinOffIcon className="size-3.5" />
+								) : (
+									<PinIcon className="size-3.5" />
+								)}
+								{pinned ? "Lepas Pin" : "Pin Sesi"}
+							</DropdownMenuItem>
+							<DropdownMenuItem onSelect={() => onCopyPath?.(session.path)}>
+								<CopyIcon className="size-3.5" /> Salin Path
+							</DropdownMenuItem>
+							{!session.current ? (
+								<DropdownMenuItem
+									className="text-destructive focus:text-destructive"
+									onSelect={() => onDelete(session)}
+								>
+									<Trash2Icon className="size-3.5" /> Hapus Sesi
+								</DropdownMenuItem>
+							) : null}
+						</DropdownMenuContent>
+					</DropdownMenu>
+					{!session.current ? (
+						<SidebarMenuAction
+							className="session-delete"
+							showOnHover
+							aria-label={`Hapus sesi ${label}`}
+							title="Hapus sesi"
+							onClick={(event) => {
+								event.stopPropagation();
+								onDelete(session);
+							}}
+						>
+							<XIcon />
+						</SidebarMenuAction>
+					) : null}
+				</>
 			) : null}
 		</SidebarMenuItem>
 	);
@@ -193,6 +300,12 @@ function ProjectGroup({
 	selectMode,
 	selectedPaths,
 	onToggleSelect,
+	projects = [],
+	assignments = {},
+	onCopyPath,
+	pins = new Set(),
+	onTogglePin,
+	onRenameSession,
 }) {
 	const key = project?.id ?? "__none__";
 	const [dropTarget, setDropTarget] = useState(false);
@@ -256,7 +369,7 @@ function ProjectGroup({
 									!project && "font-normal tracking-normal normal-case italic",
 								)}
 							>
-								{project ? project.name : "tanpa proyek"}
+								{project ? project.name : "Tanpa Proyek"}
 							</span>
 							<Badge
 								variant="secondary"
@@ -314,6 +427,13 @@ function ProjectGroup({
 								selectMode={selectMode}
 								selected={selectedPaths?.has(session.path)}
 								onToggleSelect={onToggleSelect}
+								projects={projects}
+								projectId={assignments[session.path] ?? null}
+								onAssign={onAssign}
+								onCopyPath={onCopyPath}
+								onRename={onRenameSession}
+								pinned={pins.has(session.path)}
+								onTogglePin={onTogglePin}
 							/>
 						))}
 						{sessions.length === 0 ? (
@@ -341,10 +461,44 @@ function SessionsView({
 	onToggleSelect,
 }) {
 	const [collapsedProjects, setCollapsedProjects] = useState(loadCollapsedProjects);
+	const [pins, setPins] = useState(loadPins);
+	const [query, setQuery] = useState("");
+	const [sortMode, setSortMode] = useState("recent");
+	const needle = query.trim().toLowerCase();
+
+	const matches = (session) => {
+		if (!needle) return true;
+		return [session.name, session.preview, session.id, session.path]
+			.filter(Boolean)
+			.some((value) => String(value).toLowerCase().includes(needle));
+	};
+	const filteredSessions = (needle ? sessions.filter(matches) : sessions).slice();
+	filteredSessions.sort((a, b) => {
+		const aPinned = pins.has(a.path);
+		const bPinned = pins.has(b.path);
+		if (aPinned !== bPinned) return aPinned ? -1 : 1;
+		if (sortMode === "name") {
+			const left = a.name || a.preview || a.id || "";
+			const right = b.name || b.preview || b.id || "";
+			return left.localeCompare(right, "id", { sensitivity: "base" });
+		}
+		return (b.mtime ?? 0) - (a.mtime ?? 0);
+	});
 
 	const visibleProjects = projects.filter(
 		(project) => !project.dir || !sessionsDir || project.dir === sessionsDir,
 	);
+
+	const togglePin = (session) => {
+		if (!session.path) return;
+		setPins((previous) => {
+			const next = new Set(previous);
+			if (next.has(session.path)) next.delete(session.path);
+			else next.add(session.path);
+			savePins(next);
+			return next;
+		});
+	};
 
 	const toggleProject = (key, open) => {
 		setCollapsedProjects((previous) => {
@@ -355,6 +509,56 @@ function SessionsView({
 			return next;
 		});
 	};
+
+	const searchBox = sessions.length > 0 ? (
+		<div className="sticky top-0 z-10 bg-sidebar/95 px-2 pt-2 pb-1 backdrop-blur">
+			<div className="relative">
+				<SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
+				<Input
+					value={query}
+					onChange={(event) => setQuery(event.target.value)}
+					placeholder="Cari sesi…"
+					aria-label="Cari sesi"
+					className="h-8 pr-8 pl-8 text-xs"
+				/>
+				{query ? (
+					<Button
+						type="button"
+						variant="ghost"
+						size="icon-xs"
+						className="absolute top-1/2 right-1 -translate-y-1/2"
+						title="Bersihkan pencarian"
+						aria-label="Bersihkan pencarian"
+						onClick={() => setQuery("")}
+					>
+						<XIcon />
+					</Button>
+				) : null}
+			</div>
+			<div className="flex items-center justify-between gap-2 px-1 pt-1">
+				<p className="text-[10.5px] text-muted-foreground">
+					{filteredSessions.length} sesi{needle ? " cocok" : ""}
+				</p>
+				<Button
+					type="button"
+					variant="ghost"
+					size="xs"
+					className="h-5 gap-1 px-1 text-[10.5px] text-muted-foreground"
+					title={
+						sortMode === "recent"
+							? "Urutkan berdasarkan nama"
+							: "Urutkan berdasarkan terbaru"
+					}
+					onClick={() =>
+						setSortMode((mode) => (mode === "recent" ? "name" : "recent"))
+					}
+				>
+					<ArrowDownWideNarrowIcon className="size-3" />
+					{sortMode === "recent" ? "Terbaru" : "Nama"}
+				</Button>
+			</div>
+		</div>
+	) : null;
 
 	if (sessions.length === 0 && visibleProjects.length === 0) {
 		return (
@@ -369,72 +573,114 @@ function SessionsView({
 		);
 	}
 
-	if (visibleProjects.length === 0) {
+	if (needle && filteredSessions.length === 0) {
 		return (
-			<div className="p-2">
-				<SidebarMenu className="gap-0.5">
-					{sessions.map((session) => (
-						<SessionRow
-							key={session.path ?? session.id}
-							session={session}
-							onSwitch={callbacks.switchSession}
-							onDelete={callbacks.deleteSession}
-							draggingPath={draggingPath}
-							setDraggingPath={setDraggingPath}
-							selectMode={selectMode}
-							selected={selectedPaths?.has(session.path)}
-							onToggleSelect={onToggleSelect}
-						/>
-					))}
-				</SidebarMenu>
-			</div>
+			<>
+				{searchBox}
+				<SidebarEmpty
+					title="Tidak ada sesi cocok"
+					description={`Tidak ada sesi yang mengandung “${query.trim()}”.`}
+				/>
+			</>
 		);
 	}
 
 	const byProject = new Map(visibleProjects.map((project) => [project.id, []]));
 	const loose = [];
-	for (const session of sessions) {
+	for (const session of filteredSessions) {
 		const projectId = assignments[session.path];
 		if (projectId && byProject.has(projectId)) byProject.get(projectId).push(session);
 		else loose.push(session);
 	}
+	const shownProjects = needle
+		? visibleProjects.filter((project) => (byProject.get(project.id) ?? []).length > 0)
+		: visibleProjects;
+
+	if (visibleProjects.length === 0) {
+		return (
+			<>
+				{searchBox}
+				<div className="p-2 pt-1">
+					<SidebarMenu className="gap-0.5">
+						{filteredSessions.map((session) => (
+							<SessionRow
+								key={session.path ?? session.id}
+								session={session}
+								onSwitch={callbacks.switchSession}
+								onDelete={callbacks.deleteSession}
+								draggingPath={draggingPath}
+								setDraggingPath={setDraggingPath}
+								selectMode={selectMode}
+								selected={selectedPaths?.has(session.path)}
+								onToggleSelect={onToggleSelect}
+								projects={visibleProjects}
+								projectId={assignments[session.path] ?? null}
+								onAssign={callbacks.assignSession}
+								onCopyPath={callbacks.copyPath}
+								onRename={callbacks.renameSession}
+								pinned={pins.has(session.path)}
+								onTogglePin={togglePin}
+							/>
+						))}
+					</SidebarMenu>
+				</div>
+			</>
+		);
+	}
 
 	return (
-		<div className="flex flex-col gap-1 p-2">
-			{visibleProjects.map((project) => (
-				<ProjectGroup
-					key={project.id}
-					project={project}
-					sessions={byProject.get(project.id) ?? []}
-					collapsed={collapsedProjects.has(project.id)}
-					onToggle={toggleProject}
-					onRename={callbacks.renameProject}
-					onDelete={callbacks.deleteProject}
-					onAssign={callbacks.assignSession}
-					draggingPath={draggingPath}
-					setDraggingPath={setDraggingPath}
-					onSwitch={callbacks.switchSession}
-					onDeleteSession={callbacks.deleteSession}
-					selectMode={selectMode}
-					selectedPaths={selectedPaths}
-					onToggleSelect={onToggleSelect}
-				/>
-			))}
-			<ProjectGroup
-				project={null}
-				sessions={loose}
-				collapsed={collapsedProjects.has("__none__")}
-				onToggle={toggleProject}
-				onAssign={callbacks.assignSession}
-				draggingPath={draggingPath}
-				setDraggingPath={setDraggingPath}
-				onSwitch={callbacks.switchSession}
-				onDeleteSession={callbacks.deleteSession}
-				selectMode={selectMode}
-				selectedPaths={selectedPaths}
-				onToggleSelect={onToggleSelect}
-			/>
-		</div>
+		<>
+			{searchBox}
+			<div className="flex flex-col gap-1 p-2 pt-1">
+				{shownProjects.map((project) => (
+					<ProjectGroup
+						key={project.id}
+						project={project}
+						sessions={byProject.get(project.id) ?? []}
+						collapsed={needle ? false : collapsedProjects.has(project.id)}
+						onToggle={toggleProject}
+						onRename={callbacks.renameProject}
+						onDelete={callbacks.deleteProject}
+						onAssign={callbacks.assignSession}
+						draggingPath={draggingPath}
+						setDraggingPath={setDraggingPath}
+						onSwitch={callbacks.switchSession}
+						onDeleteSession={callbacks.deleteSession}
+						selectMode={selectMode}
+						selectedPaths={selectedPaths}
+						onToggleSelect={onToggleSelect}
+						projects={visibleProjects}
+						assignments={assignments}
+						onCopyPath={callbacks.copyPath}
+						pins={pins}
+						onTogglePin={togglePin}
+						onRenameSession={callbacks.renameSession}
+					/>
+				))}
+				{loose.length > 0 || !needle ? (
+					<ProjectGroup
+						project={null}
+						sessions={loose}
+						collapsed={needle ? false : collapsedProjects.has("__none__")}
+						onToggle={toggleProject}
+						onAssign={callbacks.assignSession}
+						draggingPath={draggingPath}
+						setDraggingPath={setDraggingPath}
+						onSwitch={callbacks.switchSession}
+						onDeleteSession={callbacks.deleteSession}
+						selectMode={selectMode}
+						selectedPaths={selectedPaths}
+						onToggleSelect={onToggleSelect}
+						projects={visibleProjects}
+						assignments={assignments}
+						onCopyPath={callbacks.copyPath}
+						pins={pins}
+						onTogglePin={togglePin}
+						onRenameSession={callbacks.renameSession}
+					/>
+				) : null}
+			</div>
+		</>
 	);
 }
 
@@ -537,7 +783,7 @@ function TreeView({ tree, leafId, onFork }) {
 						{row.text || "(kosong)"}
 					</span>
 					{row.forkable ? (
-						<GitBranchIcon className="mt-0.5 size-3 shrink-0 text-primary/70" />
+						<GitBranchIcon className="mt-0.5 size-3 shrink-0 text-rose-600 dark:text-primary/70" />
 					) : null}
 				</button>
 			))}
@@ -673,13 +919,10 @@ export default function AppSidebar({
 			>
 				<SidebarHeader className="gap-2 border-b border-sidebar-border px-3 py-3">
 					<div className="flex items-center gap-2">
-						<div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary text-lg font-bold text-primary-foreground shadow-sm">
-							π
-						</div>
-						<div className="min-w-0 flex-1">
-							<div className="truncate text-sm font-semibold">pi gui</div>
+						<div className="flex min-w-0 flex-1 flex-col gap-1.5">
+							<Logo className="h-[18px] w-[122px] text-foreground" />
 							<div className="truncate text-[11px] text-muted-foreground">
-								sesi & workspace
+								pi gui · sesi & workspace
 							</div>
 						</div>
 						<Button
@@ -699,11 +942,11 @@ export default function AppSidebar({
 					<TabsList className="grid w-full grid-cols-2">
 						<TabsTrigger className="side-tab" data-tab="sessions" value="sessions">
 							<MessageSquareIcon className="size-3.5" />
-							sesi
+							Sesi
 						</TabsTrigger>
 						<TabsTrigger className="side-tab" data-tab="tree" value="tree">
 							<GitBranchIcon className="size-3.5" />
-							tree
+							Tree
 						</TabsTrigger>
 					</TabsList>
 				</SidebarHeader>
@@ -733,7 +976,7 @@ export default function AppSidebar({
 									disabled={selectableSessions.length === 0}
 									onClick={toggleSelectAll}
 								>
-									{allSelected ? "kosongkan" : "pilih semua"}
+									{allSelected ? "Kosongkan" : "Pilih Semua"}
 								</Button>
 							</div>
 							<div className="grid grid-cols-2 gap-1">
@@ -746,7 +989,7 @@ export default function AppSidebar({
 									onClick={deleteSelected}
 								>
 									<Trash2Icon className="size-3.5" />
-									hapus ({selectedPaths.size})
+									Hapus ({selectedPaths.size})
 								</Button>
 								<Button
 									id="side-select-cancel"
@@ -755,7 +998,7 @@ export default function AppSidebar({
 									className="text-xs"
 									onClick={exitSelectMode}
 								>
-									batal
+									Batal
 								</Button>
 							</div>
 						</div>
@@ -769,7 +1012,7 @@ export default function AppSidebar({
 								onClick={onCreateProject}
 							>
 								<FolderPlusIcon className="size-4" />
-								+ proyek
+								+ Proyek
 							</Button>
 							<div
 								className={cn(
@@ -779,37 +1022,41 @@ export default function AppSidebar({
 							>
 								<Button
 									id="side-clone"
+								title="Duplikat sesi aktif"
 									variant="ghost"
 									size="sm"
 									className="gap-1.5 px-1 text-xs"
 									onClick={onClone}
 								>
 									<CopyIcon className="size-3.5" />
-									clone
+									Clone
 								</Button>
 								<Button
 									id="side-rename"
+								title="Ganti nama sesi aktif"
 									variant="ghost"
 									size="sm"
 									className="gap-1.5 px-1 text-xs"
-									onClick={onRenameSession}
+									onClick={() => onRenameSession?.()}
 								>
 									<PencilIcon className="size-3.5" />
-									rename
+									Rename
 								</Button>
 								<Button
 									id="side-refresh"
+								title="Muat ulang daftar sesi"
 									variant="ghost"
 									size="sm"
 									className="gap-1.5 px-1 text-xs"
 									onClick={onRefresh}
 								>
 									<RefreshCwIcon className="size-3.5" />
-									muat
+									Muat
 								</Button>
 								{sideTab === "sessions" ? (
 									<Button
 										id="side-select"
+								title="Pilih beberapa sesi untuk dihapus"
 										variant="ghost"
 										size="sm"
 										className="gap-1.5 px-1 text-xs"
@@ -820,7 +1067,7 @@ export default function AppSidebar({
 										}}
 									>
 										<ListChecksIcon className="size-3.5" />
-										pilih
+										Pilih
 									</Button>
 								) : null}
 							</div>

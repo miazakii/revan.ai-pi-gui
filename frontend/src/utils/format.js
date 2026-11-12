@@ -32,3 +32,13 @@ export function contentText(content) {
 		.filter(Boolean)
 		.join("\n");
 }
+
+export function clockTime(value) {
+	if (!value) return "";
+	const numeric = typeof value === "number" ? value : Date.parse(value);
+	if (!Number.isFinite(numeric)) return "";
+	return new Date(numeric).toLocaleTimeString("id-ID", {
+		hour: "2-digit",
+		minute: "2-digit",
+	});
+}

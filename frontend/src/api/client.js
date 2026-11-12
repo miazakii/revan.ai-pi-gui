@@ -1,7 +1,6 @@
 const hashToken = new URLSearchParams(location.hash.replace(/^#/, "")).get("t");
-const queryToken = new URLSearchParams(location.search).get("t");
 export const token =
-	hashToken || queryToken || sessionStorage.getItem("pi-gui-token") || "";
+	hashToken || sessionStorage.getItem("pi-gui-token") || "";
 
 if (token) sessionStorage.setItem("pi-gui-token", token);
 

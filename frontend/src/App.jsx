@@ -1,5 +1,21 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast as notify } from "sonner";
+import { useTheme } from "next-themes";
+import {
+	BellIcon,
+	BracesIcon,
+	FileDownIcon,
+	FileTextIcon,
+	KeyboardIcon,
+	Minimize2Icon,
+	MonitorIcon,
+	MoonIcon,
+	PanelLeftIcon,
+	PlusIcon,
+	SearchIcon,
+	SunIcon,
+	TerminalIcon,
+} from "lucide-react";
 
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { Toaster } from "@/components/ui/sonner";
@@ -7,11 +23,45 @@ import AppSidebar from "./components/AppSidebar.jsx";
 import Composer from "./components/Composer.jsx";
 import DialogHost from "./components/Modal.jsx";
 import TopBar from "./components/TopBar.jsx";
+import CommandPalette from "./components/CommandPalette.jsx";
+import HelpDialog from "./components/HelpDialog.jsx";
 import Transcript from "./components/Transcript.jsx";
 import { api, apiGet, headers, postJson, token } from "./api/client.js";
 import { contentText, fmtNum, truncate } from "./utils/format.js";
 
 let noteSeq = 0;
+
+function readStored(key, fallback) {
+	try {
+		const value = localStorage.getItem(key);
+		return value === null ? fallback : value;
+	} catch {
+		return fallback;
+	}
+}
+
+function readStoredJson(key, fallback) {
+	try {
+		const value = JSON.parse(localStorage.getItem(key) ?? "null");
+		return value ?? fallback;
+	} catch {
+		return fallback;
+	}
+}
+
+function writeStored(key, value) {
+	try {
+		if (value === null || value === undefined) localStorage.removeItem(key);
+		else localStorage.setItem(key, value);
+	} catch {
+		/* localStorage diblokir/penuh */
+	}
+}
+
+const SIDEBAR_KEY = "pi-gui-sidebar";
+const SIDETAB_KEY = "pi-gui-sidetab";
+const DRAFT_KEY = "pi-gui-draft";
+const RECENT_CWD_KEY = "pi-gui-recent-cwds";
 
 function makeNote(text) {
 	return { role: "__note", id: `note-${++noteSeq}`, text };
@@ -43,6 +93,12 @@ function buildToolResults(messages) {
 	return results;
 }
 
+function toolSummaryText(args) {
+	if (!args || typeof args !== "object") return "";
+	const value = args.command ?? args.path ?? args.pattern ?? Object.keys(args).slice(0, 3).join(", ");
+	return String(value).replace(/\s+/g, " ").slice(0, 120);
+}
+
 function App() {
 	const [messages, setMessages] = useState([]);
 	const [live, setLiveState] = useState(null);
@@ -55,8 +111,21 @@ function App() {
 	const [extStatus, setExtStatus] = useState({});
 	const [extWidgetLines, setExtWidgetLines] = useState([]);
 	const [stats, setStats] = useState("");
+	const [contextPercent, setContextPercent] = useState(0);
+	const [paletteOpen, setPaletteOpen] = useState(false);
+	const [helpOpen, setHelpOpen] = useState(false);
+	const [otherTabs, setOtherTabs] = useState(false);
+	const { setTheme } = useTheme();
+	const [notificationPermission, setNotificationPermission] = useState(() => {
+		try {
+			return typeof Notification === "undefined" ? "unsupported" : Notification.permission;
+		} catch {
+			return "unsupported";
+		}
+	});
 
 	const [cwd, setCwd] = useState("");
+	const [sessionFile, setSessionFile] = useState(null);
 	const [models, setModels] = useState([]);
 	const [thinkingLevels, setThinkingLevels] = useState([]);
 	const [modelValue, setModelValue] = useState("");
@@ -64,9 +133,11 @@ function App() {
 
 	const [banner, setBanner] = useState(null);
 	const [modal, setModal] = useState(null);
-	const [sidebarOpen, setSidebarOpen] = useState(false);
+	const [sidebarOpen, setSidebarOpen] = useState(
+		() => readStored(SIDEBAR_KEY, "0") === "1",
+	);
 
-	const [input, setInput] = useState("");
+	const [input, setInput] = useState(() => readStored(DRAFT_KEY, ""));
 	const [attachments, setAttachments] = useState([]);
 	const [behavior, setBehavior] = useState("followUp");
 	const [commands, setCommands] = useState([]);
@@ -74,7 +145,9 @@ function App() {
 	const [slashIndex, setSlashIndex] = useState(0);
 	const [abortBusy, setAbortBusy] = useState(false);
 
-	const [sideTab, setSideTabState] = useState("sessions");
+	const [sideTab, setSideTabState] = useState(() =>
+		readStored(SIDETAB_KEY, "sessions"),
+	);
 	const [sidebarLoading, setSidebarLoading] = useState(false);
 	const [sidebarError, setSidebarError] = useState("");
 	const [sessions, setSessions] = useState([]);
@@ -83,6 +156,9 @@ function App() {
 	const [sessionsDir, setSessionsDir] = useState(null);
 	const [tree, setTree] = useState([]);
 	const [treeLeafId, setTreeLeafId] = useState(null);
+	const [recentCwds, setRecentCwds] = useState(() =>
+		readStoredJson(RECENT_CWD_KEY, []),
+	);
 
 	const inputRef = useRef(null);
 	const liveRef = useRef(null);
@@ -107,6 +183,7 @@ function App() {
 	const projectsRef = useRef([]);
 	const assignmentsRef = useRef({});
 	const projectMutationRef = useRef(0);
+	const lastAssistantTextRef = useRef("");
 
 	const toast = useCallback((message, type = "info") => {
 		if (!message) return;
@@ -116,6 +193,39 @@ function App() {
 		else notify(text);
 	}, []);
 
+	const requestNotifications = async () => {
+		if (typeof Notification === "undefined") {
+			return toast("Browser ini tidak mendukung notifikasi", "warning");
+		}
+		try {
+			const permission = await Notification.requestPermission();
+			setNotificationPermission(permission);
+			if (permission === "granted") toast("notifikasi selesai run diaktifkan");
+			else toast("izinkan notifikasi di pengaturan browser", "warning");
+		} catch {
+			toast("gagal meminta izin notifikasi", "error");
+		}
+	};
+
+	const notifyRunFinished = () => {
+		if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
+		if (!document.hidden) return;
+		try {
+			const title = document.title.replace(/ — pi$/, "").replace(/^✓ /, "") || "pi";
+			const notification = new Notification(`pi · ${title}`, {
+				body: truncate(lastAssistantTextRef.current || "Run selesai.", 180),
+				tag: "pi-gui-settled",
+			});
+			notification.onclick = () => {
+				window.focus();
+				notification.close();
+			};
+			document.title = `✓ ${document.title.replace(/^✓ /, "")}`;
+		} catch {
+			/* notifikasi diblokir */
+		}
+	};
+
 	const setStreaming = (value) => {
 		isStreamingRef.current = Boolean(value);
 		setIsStreamingState(Boolean(value));
@@ -123,6 +233,7 @@ function App() {
 
 	const setSidebarOpenState = (value) => {
 		setSidebarOpen(Boolean(value));
+		writeStored(SIDEBAR_KEY, value ? "1" : "0");
 	};
 
 	const setBehaviorState = (value) => {
@@ -159,7 +270,7 @@ function App() {
 	}, []);
 
 	const promptModal = useCallback(
-		({ title, value = "", placeholder = "", okLabel = "simpan", label = "Nama" }) =>
+		({ title, value = "", placeholder = "", okLabel = "Simpan", label = "Nama" }) =>
 			openModal({
 				title,
 				input: { value, placeholder, multiline: false, label },
@@ -169,7 +280,7 @@ function App() {
 						value: (current) => String(current ?? "").trim(),
 						variant: "primary",
 					},
-					{ label: "batal", value: undefined, variant: "ghost" },
+					{ label: "Batal", value: undefined, variant: "ghost" },
 				],
 			}),
 		[openModal],
@@ -210,6 +321,7 @@ function App() {
 		}
 		setLiveState({
 			thinking: current.thinking,
+			thinkingText: current.thinkingText,
 			blocks: [...current.blocks.entries()]
 				.sort(([a], [b]) => a - b)
 				.map(([index, block]) => ({ index, text: block.text, final: block.final })),
@@ -218,7 +330,7 @@ function App() {
 
 	const startLiveAssistant = () => {
 		if (liveRef.current) return;
-		liveRef.current = { thinking: false, blocks: new Map() };
+		liveRef.current = { thinking: false, thinkingText: "", blocks: new Map() };
 		syncLive();
 	};
 
@@ -281,12 +393,21 @@ function App() {
 				break;
 			}
 			case "thinking_start":
+				startLiveAssistant();
+				liveRef.current.thinking = true;
+				liveRef.current.thinkingText = "";
+				scheduleLiveFlush({ final: true });
+				break;
 			case "thinking_delta":
 				startLiveAssistant();
 				liveRef.current.thinking = true;
-				scheduleLiveFlush({ final: true });
+				liveRef.current.thinkingText += event.delta ?? "";
+				scheduleLiveFlush();
 				break;
 			case "thinking_end":
+				scheduleLiveFlush({ final: true });
+				if (liveRef.current) liveRef.current.thinking = false;
+				break;
 			case "toolcall_start":
 			case "toolcall_end":
 				if (liveRef.current) {
@@ -323,6 +444,12 @@ function App() {
 		if (message.role === "user") return;
 		if (message.role === "assistant") {
 			stopLive();
+			const text = (message.content ?? [])
+				.filter((block) => block.type === "text")
+				.map((block) => block.text)
+				.join("\n")
+				.trim();
+			if (text) lastAssistantTextRef.current = text;
 			appendMessage(message);
 			return;
 		}
@@ -349,10 +476,13 @@ function App() {
 		const data = response.data;
 		const parts = [];
 		if (data.contextUsage) {
+			setContextPercent(Number(data.contextUsage.percent ?? 0));
 			parts.push(
 				`ctx ${fmtNum(data.contextUsage.tokens)}/${fmtNum(data.contextUsage.contextWindow)} ` +
 					`(${Math.round(data.contextUsage.percent ?? 0)}%)`,
 			);
+		} else {
+			setContextPercent(0);
 		}
 		parts.push(`$${(data.cost ?? 0).toFixed(3)}`, `${data.toolCalls ?? 0} tool`);
 		setStats(parts.join(" · "));
@@ -369,6 +499,7 @@ function App() {
 		const queued = session.pendingMessageCount ?? 0;
 		if (queued !== pendingCountRef.current) renderQueue(queued > 0 ? { unknown: queued } : {});
 		pendingCountRef.current = queued;
+		setSessionFile(session.sessionFile ?? null);
 		modelRef.current = session.model ?? null;
 		thinkingRef.current = session.thinkingLevel ?? null;
 		if (session.model) setModelValue(`${session.model.provider}/${session.model.id}`);
@@ -396,7 +527,12 @@ function App() {
 	const loadHistory = async ({ allowStreaming = false } = {}) => {
 		const request = ++historyRequestRef.current;
 		const response = await api({ type: "get_messages" });
-		if (!response.success || request !== historyRequestRef.current) return;
+		if (request !== historyRequestRef.current) return;
+		if (!response.success) {
+			setNotice(`Gagal memuat riwayat: ${response.error ?? "respons tidak valid"}`);
+			toast(response.error ?? "gagal memuat riwayat", "error");
+			return;
+		}
 		if (isStreamingRef.current && !allowStreaming) return;
 		renderAll(response.data.messages ?? []);
 	};
@@ -411,6 +547,8 @@ function App() {
 		stopLive();
 		historyRequestRef.current += 1;
 		setStreaming(false);
+		setContextPercent(0);
+		setSessionFile(null);
 		needsHistoryResyncRef.current = false;
 		pendingCountRef.current = 0;
 		setMessages([]);
@@ -420,6 +558,8 @@ function App() {
 		setExtStatus({});
 		setStats("");
 		setNotice("");
+		setInputValue("");
+		setAttachments([]);
 		document.title = "pi gui";
 		setStatus("siap");
 	};
@@ -430,7 +570,24 @@ function App() {
 		void restart(next);
 	};
 
+	const confirmBusy = async (title) => {
+		if (!isStreamingRef.current && pendingCountRef.current === 0) return true;
+		return Boolean(
+			await openModal({
+				title,
+				message:
+					"Agent masih berjalan dan queue mungkin belum kosong. Tindakan ini akan menghentikan atau meninggalkan run tersebut.",
+				alert: true,
+				buttons: [
+					{ label: "Lanjut", value: true, variant: "danger" },
+					{ label: "Batal", value: false, variant: "ghost" },
+				],
+			}),
+		);
+	};
+
 	const restart = async (nextCwd) => {
+		if (!(await confirmBusy("Pindah workspace saat agent berjalan?"))) return;
 		const { ok, body } = await postJson("/api/restart", { cwd: nextCwd });
 		if (!ok) {
 			toast(body?.error ?? "gagal pindah workspace", "error");
@@ -483,7 +640,7 @@ function App() {
 					title: request.title,
 					buttons: [
 						...(request.options ?? []).map((option) => ({ label: option, value: option })),
-						{ label: "batal", value: undefined, variant: "ghost" },
+						{ label: "Batal", value: undefined, variant: "ghost" },
 					],
 				});
 				return respondUi(request, value === undefined ? { cancelled: true } : { value });
@@ -494,8 +651,8 @@ function App() {
 					message: request.message ?? "",
 					alert: true,
 					buttons: [
-						{ label: "ya", value: true, variant: "primary" },
-						{ label: "tidak", value: false },
+						{ label: "Ya", value: true, variant: "primary" },
+						{ label: "Tidak", value: false },
 					],
 				});
 				return respondUi(
@@ -513,8 +670,8 @@ function App() {
 						label: "Input",
 					},
 					buttons: [
-						{ label: "ok", value: (current) => current, variant: "primary" },
-						{ label: "batal", value: undefined },
+						{ label: "OK", value: (current) => current, variant: "primary" },
+						{ label: "Batal", value: undefined },
 					],
 				});
 				return respondUi(request, value === undefined ? { cancelled: true } : { value });
@@ -530,8 +687,8 @@ function App() {
 						label: "Editor",
 					},
 					buttons: [
-						{ label: "ok", value: (current) => current, variant: "primary" },
-						{ label: "batal", value: undefined },
+						{ label: "OK", value: (current) => current, variant: "primary" },
+						{ label: "Batal", value: undefined },
 					],
 				});
 				return respondUi(request, value === undefined ? { cancelled: true } : { value });
@@ -620,6 +777,7 @@ function App() {
 	const changeSideTab = (tab) => {
 		sideTabRef.current = tab;
 		setSideTabState(tab);
+		writeStored(SIDETAB_KEY, tab);
 		void refreshSidebar();
 	};
 
@@ -654,7 +812,7 @@ function App() {
 		const name = await promptModal({
 			title: "Proyek baru",
 			placeholder: "mis. refactor auth",
-			okLabel: "buat",
+			okLabel: "Buat",
 			label: "Nama proyek",
 		});
 		if (!name) return;
@@ -667,7 +825,7 @@ function App() {
 		const name = await promptModal({
 			title: "Ganti nama proyek",
 			value: project.name,
-			okLabel: "simpan",
+			okLabel: "Simpan",
 			label: "Nama proyek",
 		});
 		if (!name) return;
@@ -682,8 +840,8 @@ function App() {
 			message: `Proyek “${project.name}” dihapus. ${count > 0 ? `${count} sesi kembali ke “tanpa proyek”. ` : ""}File sesi tidak dihapus.`,
 			alert: true,
 			buttons: [
-				{ label: "hapus proyek", value: true, variant: "danger" },
-				{ label: "batal", value: false, variant: "ghost" },
+				{ label: "Hapus Proyek", value: true, variant: "danger" },
+				{ label: "Batal", value: false, variant: "ghost" },
 			],
 		});
 		if (!confirmed) return;
@@ -710,18 +868,18 @@ function App() {
 			title: targets.length === 1 ? "Hapus sesi?" : `Hapus ${targets.length} sesi?`,
 			message:
 				targets.length === 1
-					? `Sesi “${labelOf(targets[0])}” akan dihapus permanen dari disk.`
-					: `${targets.length} sesi berikut akan dihapus permanen dari disk:\n${targets
+					? `Sesi “${labelOf(targets[0])}” akan dipindahkan ke trash dan bisa diurungkan.`
+					: `${targets.length} sesi berikut akan dipindahkan ke trash (bisa diurungkan):\n${targets
 							.map((session) => `• ${labelOf(session)}`)
 							.join("\n")}`,
 			alert: true,
 			buttons: [
 				{
-					label: targets.length === 1 ? "hapus" : `hapus ${targets.length}`,
+					label: targets.length === 1 ? "Hapus" : `Hapus ${targets.length}`,
 					value: true,
 					variant: "danger",
 				},
-				{ label: "batal", value: false, variant: "ghost" },
+				{ label: "Batal", value: false, variant: "ghost" },
 			],
 		});
 		if (!confirmed) return false;
@@ -730,13 +888,25 @@ function App() {
 			paths: targets.map((session) => session.path),
 		});
 		const deleted = Array.isArray(body?.deleted) ? body.deleted : [];
+		const trashed = Array.isArray(body?.trashed) ? body.trashed : [];
 		const failed = Array.isArray(body?.failed) ? body.failed : [];
 		if (!ok && deleted.length === 0) {
 			toast(body?.error ?? "gagal menghapus sesi", "error");
 			return false;
 		}
 		if (deleted.length > 0) {
-			toast(deleted.length === 1 ? "sesi dihapus" : `${deleted.length} sesi dihapus`);
+			const message = deleted.length === 1 ? "sesi dipindahkan ke trash" : `${deleted.length} sesi dipindahkan ke trash`;
+			if (trashed.length > 0) {
+				notify.success(message, {
+					duration: 9000,
+					action: {
+						label: "Urungkan",
+						onClick: () => void restoreTrashed(trashed),
+					},
+				});
+			} else {
+				toast(message);
+			}
 		}
 		if (failed.length > 0) {
 			toast(
@@ -750,6 +920,19 @@ function App() {
 
 	const deleteSession = (session) => deleteSessions([session]);
 
+	const restoreTrashed = async (items) => {
+		const paths = items.map((item) => item?.trashPath).filter(Boolean);
+		if (paths.length === 0) return;
+		const { ok, body } = await postJson("/api/sessions/restore", { paths });
+		const restored = Array.isArray(body?.restored) ? body.restored : [];
+		if (!ok || restored.length === 0) {
+			toast(body?.error ?? body?.failed?.[0]?.error ?? "gagal mengurungkan hapus", "error");
+			return;
+		}
+		toast(restored.length === 1 ? "sesi dipulihkan" : `${restored.length} sesi dipulihkan`);
+		await refreshSidebar();
+	};
+
 	const afterSessionChange = async () => {
 		resetSessionUi();
 		await refreshState();
@@ -761,20 +944,24 @@ function App() {
 
 	const switchSession = async (session) => {
 		if (session.current) return;
+		if (!(await confirmBusy("Pindah sesi saat agent berjalan?"))) return;
 		const response = await api({ type: "switch_session", sessionPath: session.path });
 		if (!response.success) return toast(response.error ?? "gagal switch sesi", "error");
 		if (response.data?.cancelled) return toast("switch dibatalkan extension");
 		await afterSessionChange();
 	};
 
-	const forkFrom = async (entryId, text) => {
+	const forkFrom = async (entryId, text, { autoSend = false } = {}) => {
+		const busy = isStreamingRef.current || pendingCountRef.current > 0;
 		const confirmed = await openModal({
 			title: "Fork dari pesan ini?",
-			message: truncate(text, 300),
+			message:
+				truncate(text, 300) +
+				(busy ? "\n\nAgent masih berjalan; fork akan meninggalkan run yang aktif." : ""),
 			alert: true,
 			buttons: [
-				{ label: "fork", value: true, variant: "primary" },
-				{ label: "batal", value: false },
+				{ label: "Fork", value: true, variant: "primary" },
+				{ label: "Batal", value: false },
 			],
 		});
 		if (!confirmed) return;
@@ -785,13 +972,27 @@ function App() {
 		const forkedText = response.data?.text ?? "";
 		await afterSessionChange();
 		if (forkedText) {
-			setInputValue(forkedText);
-			inputRef.current?.focus();
+			if (autoSend) {
+				const sent = await api({ type: "prompt", message: forkedText });
+				if (!sent.success) {
+					setInputValue(forkedText);
+					inputRef.current?.focus();
+					toast(sent.error ?? "gagal mengirim ulang", "error");
+					return;
+				}
+				toast("fork dibuat — prompt dikirim ulang");
+			} else {
+				setInputValue(forkedText);
+				inputRef.current?.focus();
+				toast("fork dibuat — pesan asli ada di editor");
+			}
+		} else {
+			toast("fork dibuat");
 		}
-		toast("fork dibuat — pesan asli ada di editor");
 	};
 
 	const cloneSession = async () => {
+		if (!(await confirmBusy("Duplikat sesi saat agent berjalan?"))) return;
 		const response = await api({ type: "clone" });
 		if (!response.success) return toast(response.error ?? "clone gagal", "error");
 		if (response.data?.cancelled) return toast("clone dibatalkan extension");
@@ -799,20 +1000,33 @@ function App() {
 		toast("clone dibuat");
 	};
 
-	const renameSession = async () => {
-		const current = await api({ type: "get_state" });
-		if (!current.success) return toast(current.error ?? "get_state gagal", "error");
+	const renameSession = async (session = null) => {
+		let current = null;
+		if (!session) {
+			current = await api({ type: "get_state" });
+			if (!current.success) return toast(current.error ?? "get_state gagal", "error");
+		}
+		const isCurrent = !session || session.current;
 		const name = await promptModal({
-			title: "Nama sesi aktif",
-			value: current.data?.sessionName ?? "",
+			title: session ? "Ganti nama sesi" : "Nama sesi aktif",
+			value: session ? (session.name ?? "") : (current.data?.sessionName ?? ""),
 			placeholder: "mis. refactor auth",
-			okLabel: "simpan",
+			okLabel: "Simpan",
 			label: "Nama sesi",
 		});
 		if (name === undefined) return;
-		const response = await api({ type: "set_session_name", name });
-		if (!response.success) return toast(response.error ?? "gagal menyimpan nama", "error");
-		document.title = name ? `${name} — pi` : "pi gui";
+
+		if (!isCurrent) {
+			const { ok, body } = await postJson("/api/sessions/rename", {
+				path: session.path,
+				name,
+			});
+			if (!ok) return toast(body?.error ?? "gagal menyimpan nama", "error");
+		} else {
+			const response = await api({ type: "set_session_name", name });
+			if (!response.success) return toast(response.error ?? "gagal menyimpan nama", "error");
+			document.title = name ? `${name} — pi` : "pi gui";
+		}
 		toast(name ? "nama sesi disimpan" : "nama sesi dihapus");
 		await refreshSidebar();
 	};
@@ -824,14 +1038,14 @@ function App() {
 					setStatus("pi gagal");
 					showBanner(
 						`Agent pi gagal: ${record.error}`,
-						"nyalakan ulang",
+						"Nyalakan Ulang",
 						() => handlersRef.current.restartAgentFromBanner(),
 					);
 				} else if (!record.pid) {
 					setStatus("pi berhenti");
 					showBanner(
 						"Proses pi tidak berjalan.",
-						"nyalakan ulang",
+						"Nyalakan Ulang",
 						() => handlersRef.current.restartAgentFromBanner(),
 					);
 				} else {
@@ -850,7 +1064,7 @@ function App() {
 				setStatus("pi gagal");
 				showBanner(
 					`Gagal menjalankan pi: ${record.message}`,
-					"nyalakan ulang",
+					"Nyalakan Ulang",
 					() => handlersRef.current.restartAgentFromBanner(),
 				);
 				break;
@@ -861,7 +1075,7 @@ function App() {
 				setStatus("pi berhenti");
 				showBanner(
 					`Proses pi berhenti${record.code !== undefined && record.code !== null ? ` (code=${record.code})` : ""}${record.signal ? ` (signal=${record.signal})` : ""}.`,
-					"nyalakan ulang",
+					"Nyalakan Ulang",
 					() => handlersRef.current.restartAgentFromBanner(),
 				);
 				break;
@@ -876,6 +1090,7 @@ function App() {
 				setStreaming(false);
 				stopLive();
 				setStatus("siap");
+				notifyRunFinished();
 				if (needsHistoryResyncRef.current) {
 					needsHistoryResyncRef.current = false;
 					void loadHistory();
@@ -893,7 +1108,7 @@ function App() {
 				onMessageEnd(record.message);
 				break;
 			case "tool_execution_start":
-				updateToolResult(record.toolCallId, { status: "jalan…" });
+				updateToolResult(record.toolCallId, { status: "jalan…", startedAt: Date.now() });
 				break;
 			case "tool_execution_update":
 				updateToolResult(record.toolCallId, {
@@ -1024,22 +1239,73 @@ function App() {
 			reader.readAsDataURL(file);
 		});
 
+	const prepareImage = async (file) => {
+		const MAX_DIMENSION = 2000;
+		const MAX_BYTES = 4.5 * 1024 * 1024;
+		const originalUrl = await readAsDataUrl(file).catch(() => null);
+		if (!originalUrl) return null;
+
+		let dataUrl = originalUrl;
+		let mimeType = file.type || "image/png";
+		let size = file.size;
+
+		// GIF dilewati agar animasinya tidak hilang; format lain aman dikompresi.
+		const needsResize = file.type !== "image/gif";
+		if (needsResize && typeof createImageBitmap === "function") {
+			const bitmap = await createImageBitmap(file).catch(() => null);
+			if (bitmap) {
+				const scale = Math.min(
+					1,
+					MAX_DIMENSION / Math.max(bitmap.width, bitmap.height),
+				);
+				const width = Math.max(1, Math.round(bitmap.width * scale));
+				const height = Math.max(1, Math.round(bitmap.height * scale));
+				const canvas = document.createElement("canvas");
+				canvas.width = width;
+				canvas.height = height;
+				const context = canvas.getContext("2d");
+				context?.drawImage(bitmap, 0, 0, width, height);
+				bitmap.close?.();
+
+				if (file.size > MAX_BYTES || scale < 1) {
+					const blob = await new Promise((resolve) =>
+						canvas.toBlob(resolve, "image/jpeg", 0.82),
+					);
+					if (blob && blob.size < file.size) {
+						const converted = await readAsDataUrl(blob).catch(() => null);
+						if (converted) {
+							dataUrl = converted;
+							mimeType = "image/jpeg";
+							size = blob.size;
+						}
+					}
+				}
+			}
+		}
+
+		const comma = dataUrl.indexOf(",");
+		if (comma < 0) return null;
+		return {
+			type: "image",
+			data: dataUrl.slice(comma + 1),
+			mimeType,
+			preview: dataUrl,
+			size,
+		};
+	};
+
 	const addImageFiles = async (files) => {
 		const additions = [];
 		for (const file of files) {
 			if (!file.type.startsWith("image/")) continue;
-			const dataUrl = await readAsDataUrl(file).catch(() => null);
-			if (!dataUrl) continue;
-			const comma = dataUrl.indexOf(",");
-			if (comma < 0) continue;
-			additions.push({
-				type: "image",
-				data: dataUrl.slice(comma + 1),
-				mimeType: file.type || "image/png",
-				preview: dataUrl,
-			});
+			const image = await prepareImage(file);
+			if (image) additions.push(image);
 		}
-		if (additions.length > 0) setAttachments((items) => [...items, ...additions]);
+		if (additions.length === 0) return;
+		if (attachments.length + additions.length > 12) {
+			toast("maksimal 12 gambar", "warning");
+		}
+		setAttachments((items) => [...items, ...additions].slice(0, 12));
 	};
 
 	const applySlash = (command) => {
@@ -1105,6 +1371,7 @@ function App() {
 	};
 
 	const newSession = async () => {
+		if (!(await confirmBusy("Mulai sesi baru saat agent berjalan?"))) return;
 		const response = await api({ type: "new_session" });
 		if (!response.success) return toast(response.error ?? "gagal sesi baru", "error");
 		if (response.data?.cancelled) return toast("dibatalkan oleh extension");
@@ -1118,10 +1385,89 @@ function App() {
 		await refreshStats();
 	};
 
+	const downloadFile = (filename, content, mime) => {
+		const url = URL.createObjectURL(new Blob([content], { type: mime }));
+		const link = document.createElement("a");
+		link.href = url;
+		link.download = filename;
+		link.click();
+		setTimeout(() => URL.revokeObjectURL(url), 1500);
+	};
+
+	const exportBaseName = () => {
+		const title = document.title
+			.replace(/ — pi$/, "")
+			.replace(/^✓ /, "")
+			.replace(/[^a-zA-Z0-9-_]+/g, "-")
+			.replace(/^-+|-+$/g, "")
+			.slice(0, 50);
+		return `pi-${title || "transcript"}-${new Date().toISOString().slice(0, 10)}`;
+	};
+
+	const exportMarkdown = () => {
+		if (messages.length === 0) return toast("transcript masih kosong", "warning");
+		const lines = ["# pi transcript", "", `- diexport: ${new Date().toISOString()}`, ""];
+		for (const message of messages) {
+			if (message.role === "user") {
+				lines.push("## You", "", contentText(message.content), "");
+			} else if (message.role === "assistant") {
+				const text = (message.content ?? [])
+					.filter((block) => block.type === "text")
+					.map((block) => block.text)
+					.join("\n\n")
+					.trim();
+				const thinking = (message.content ?? [])
+					.filter((block) => block.type === "thinking")
+					.map((block) => block.thinking)
+					.join("\n\n")
+					.trim();
+				if (text) lines.push("## Assistant", "", text, "");
+				if (thinking) {
+					lines.push("<details>", "<summary>thinking</summary>", "", thinking, "", "</details>", "");
+				}
+				for (const block of message.content ?? []) {
+					if (block.type !== "toolCall") continue;
+					lines.push(`> tool: \`${block.name}\` ${toolSummaryText(block.arguments)}`, "");
+				}
+			} else if (message.role === "__note") {
+				lines.push(`> ${message.text}`, "");
+			}
+		}
+		downloadFile(`${exportBaseName()}.md`, lines.join("\n"), "text/markdown;charset=utf-8");
+		toast("transcript diexport sebagai Markdown");
+	};
+
+	const exportJson = () => {
+		if (messages.length === 0) return toast("transcript masih kosong", "warning");
+		downloadFile(
+			`${exportBaseName()}.json`,
+			JSON.stringify({ exportedAt: new Date().toISOString(), messages }, null, 2),
+			"application/json;charset=utf-8",
+		);
+		toast("transcript diexport sebagai JSON");
+	};
+
 	const exportHtml = async () => {
 		const response = await api({ type: "export_html" });
 		if (!response.success) return toast(response.error ?? "export gagal", "error");
-		toast(`export: ${response.data?.path ?? "selesai"}`);
+		const path = response.data?.path ?? "";
+		if (!path) return toast("export selesai");
+		const action = await openModal({
+			title: "Export HTML selesai",
+			message: path,
+			buttons: [
+				{ label: "Salin Path", value: "copy", variant: "primary" },
+				{ label: "Tutup", value: undefined, variant: "ghost" },
+			],
+		});
+		if (action === "copy") {
+			try {
+				await navigator.clipboard.writeText(path);
+				toast("path export disalin");
+			} catch {
+				toast("clipboard ditolak browser", "error");
+			}
+		}
 	};
 
 	handlersRef.current = {
@@ -1129,6 +1475,7 @@ function App() {
 		refreshState,
 		refreshStats,
 		refreshCommands,
+		stopRun,
 		loadHistory,
 		setStatus,
 		showBanner,
@@ -1167,6 +1514,106 @@ function App() {
 		inputRef.current.style.height = "auto";
 		inputRef.current.style.height = `${Math.min(inputRef.current.scrollHeight, 320)}px`;
 	}, [input]);
+
+	useEffect(() => {
+		const timer = setTimeout(() => writeStored(DRAFT_KEY, input || null), 250);
+		return () => clearTimeout(timer);
+	}, [input]);
+
+	useEffect(() => {
+		if (!cwd) return;
+		setRecentCwds((previous) => {
+			if (previous[0] === cwd) return previous;
+			const next = [cwd, ...previous.filter((item) => item !== cwd)].slice(0, 8);
+			writeStored(RECENT_CWD_KEY, JSON.stringify(next));
+			return next;
+		});
+	}, [cwd]);
+
+	useEffect(() => {
+		if (typeof BroadcastChannel === "undefined") return;
+		const myId = Math.random().toString(36).slice(2);
+		const tabs = new Set([myId]);
+		const channel = new BroadcastChannel("pi-gui-tabs");
+		const sync = () => setOtherTabs(tabs.size > 1);
+		channel.onmessage = (event) => {
+			const data = event.data;
+			if (!data || data.id === myId) return;
+			if (data.type === "hello") {
+				tabs.add(data.id);
+				sync();
+				channel.postMessage({ type: "here", id: myId, to: data.id });
+			} else if (data.type === "here" && data.to === myId) {
+				tabs.add(data.id);
+				sync();
+			} else if (data.type === "bye") {
+				tabs.delete(data.id);
+				sync();
+			}
+		};
+		channel.postMessage({ type: "hello", id: myId });
+		const bye = () => channel.postMessage({ type: "bye", id: myId });
+		window.addEventListener("pagehide", bye);
+		return () => {
+			bye();
+			window.removeEventListener("pagehide", bye);
+			channel.close();
+		};
+	}, []);
+
+	useEffect(() => {
+		const restoreTitle = () => {
+			document.title = document.title.replace(/^✓ /, "");
+		};
+		const onVisibility = () => {
+			if (!document.hidden) restoreTitle();
+		};
+		window.addEventListener("focus", restoreTitle);
+		document.addEventListener("visibilitychange", onVisibility);
+		return () => {
+			window.removeEventListener("focus", restoreTitle);
+			document.removeEventListener("visibilitychange", onVisibility);
+		};
+	}, []);
+
+	useEffect(() => {
+		const onKey = (event) => {
+			const target = event.target;
+			const typing =
+				target instanceof HTMLElement &&
+				(Boolean(target.closest("input, textarea, select")) || target.isContentEditable);
+			const modifier = event.metaKey || event.ctrlKey;
+
+			if (modifier && event.key.toLowerCase() === "k") {
+				event.preventDefault();
+				setPaletteOpen(true);
+				return;
+			}
+			if (
+				event.key === "?" &&
+				!modifier &&
+				!typing &&
+				!document.querySelector('[role="dialog"]')
+			) {
+				event.preventDefault();
+				setHelpOpen(true);
+				return;
+			}
+			if (modifier && event.key.toLowerCase() === "b" && !typing) {
+				event.preventDefault();
+				setSidebarOpenState(!sidebarOpen);
+				return;
+			}
+			if (event.key !== "Escape" || event.defaultPrevented) return;
+			if (document.querySelector('[role="dialog"], [role="menu"]')) return;
+			if (isStreamingRef.current || pendingCountRef.current > 0) {
+				event.preventDefault();
+				void handlersRef.current.stopRun?.();
+			}
+		};
+		window.addEventListener("keydown", onKey);
+		return () => window.removeEventListener("keydown", onKey);
+	}, [sidebarOpen]);
 
 	useEffect(() => {
 		const events = {
@@ -1225,7 +1672,7 @@ function App() {
 					handlersRef.current.setStatus("token ditolak");
 					handlersRef.current.showBanner(
 						"Token ditolak server. Buka URL terbaru dari terminal, lalu muat ulang halaman.",
-						"muat ulang",
+						"Muat Ulang",
 						() => location.reload(),
 					);
 					return;
@@ -1270,6 +1717,11 @@ function App() {
 			} catch {
 				if (events.disposed || controller.signal.aborted) return;
 				handlersRef.current.setStatus("menyambung ulang…");
+				handlersRef.current.showBanner(
+					"Koneksi ke server terputus. Mencoba menyambung ulang…",
+					"Muat Ulang",
+					() => location.reload(),
+				);
 				scheduleReconnect();
 			}
 		};
@@ -1284,7 +1736,7 @@ function App() {
 				handlersRef.current.setStatus("token ditolak");
 				handlersRef.current.showBanner(
 					"Token ditolak server. Buka URL terbaru yang dicetak terminal (termasuk #t=…).",
-					"muat ulang",
+					"Muat Ulang",
 					() => location.reload(),
 				);
 				return;
@@ -1296,7 +1748,7 @@ function App() {
 				handlersRef.current.setStatus("pi gagal");
 				handlersRef.current.showBanner(
 					`Agent pi tidak berjalan: ${info.error ?? "pid tidak tersedia"}`,
-					"nyalakan ulang",
+					"Nyalakan Ulang",
 					() => handlersRef.current.restartAgentFromBanner(),
 				);
 				inputRef.current?.focus();
@@ -1321,6 +1773,118 @@ function App() {
 		};
 	}, []);
 
+	const forkFromRef = useRef(null);
+	forkFromRef.current = forkFrom;
+	const forkAction = useCallback(
+		(entryId, text) => forkFromRef.current?.(entryId, text),
+		[],
+	);
+	const regenerateRef = useRef(null);
+	regenerateRef.current = (entryId, text) =>
+		forkFrom(entryId, text, { autoSend: true });
+	const regenerateAction = useCallback(
+		(entryId, text) => regenerateRef.current?.(entryId, text),
+		[],
+	);
+
+	const queueTotal =
+		(queue.steering?.length ?? 0) + (queue.followUp?.length ?? 0) + (queue.unknown ?? 0);
+	const stopDisabled = abortBusy || (!isStreaming && queueTotal === 0);
+
+	const focusSessionSearch = () => {
+		handleSidebarOpenChange(true);
+		setTimeout(() => {
+			document
+				.querySelector('#side-body input[aria-label="Cari sesi"]')
+				?.focus();
+		}, 250);
+	};
+
+	const paletteItems = [
+		{
+			id: "new-session",
+			label: "Sesi Baru",
+			icon: PlusIcon,
+			run: () => void newSession(),
+		},
+		{
+			id: "compact",
+			label: "Ringkas Konteks (Compact)",
+			icon: Minimize2Icon,
+			run: () => void compact(),
+		},
+		{
+			id: "search-session",
+			label: "Cari Sesi di Sidebar",
+			icon: SearchIcon,
+			run: focusSessionSearch,
+		},
+		{
+			id: "focus-composer",
+			label: "Fokus ke Kotak Pesan",
+			icon: TerminalIcon,
+			run: () => inputRef.current?.focus(),
+		},
+		{
+			id: "toggle-sidebar",
+			label: sidebarOpen ? "Tutup sidebar" : "Buka sidebar",
+			icon: PanelLeftIcon,
+			run: () => setSidebarOpenState(!sidebarOpen),
+		},
+		{
+			id: "export-html",
+			label: "Export Transcript ke HTML",
+			icon: FileDownIcon,
+			run: () => void exportHtml(),
+		},
+		{
+			id: "export-markdown",
+			label: "Export Transcript ke Markdown",
+			icon: FileTextIcon,
+			run: exportMarkdown,
+		},
+		{
+			id: "export-json",
+			label: "Export Transcript ke JSON",
+			icon: BracesIcon,
+			run: exportJson,
+		},
+		{
+			id: "notifications",
+			label:
+				notificationPermission === "granted"
+					? "Notifikasi selesai sudah aktif"
+					: "Aktifkan notifikasi selesai run",
+			icon: BellIcon,
+			run: () => void requestNotifications(),
+		},
+		{
+			id: "theme-light",
+			label: "Tema Terang",
+			icon: SunIcon,
+			run: () => setTheme("light"),
+		},
+		{
+			id: "theme-dark",
+			label: "Tema Gelap",
+			icon: MoonIcon,
+			run: () => setTheme("dark"),
+		},
+		{
+			id: "theme-system",
+			label: "Tema Ikuti Sistem",
+			icon: MonitorIcon,
+			run: () => setTheme("system"),
+		},
+		{
+			id: "help",
+			label: "Shortcut & Bantuan",
+			icon: KeyboardIcon,
+			shortcut: "?",
+			run: () => setHelpOpen(true),
+		},
+	];
+
 	const sidebarCallbacks = {
 		assignSession,
 		deleteSession,
@@ -1329,6 +1893,15 @@ function App() {
 		renameProject,
 		deleteProject,
 		forkFrom,
+		renameSession,
+		copyPath: async (path) => {
+			try {
+				await navigator.clipboard.writeText(path);
+				toast("path sesi disalin");
+			} catch {
+				toast("clipboard ditolak browser", "error");
+			}
+		},
 	};
 
 	return (
@@ -1361,10 +1934,18 @@ function App() {
 				}}
 			/>
 			<SidebarInset className="h-svh min-h-0 overflow-hidden">
+				<a
+					href="#input"
+					className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-50 focus:rounded-md focus:bg-primary focus:px-3 focus:py-2 focus:text-sm focus:text-primary-foreground"
+				>
+					Lompat ke kotak pesan
+				</a>
+				<h1 className="sr-only">pi gui — antarmuka percakapan pi</h1>
 				<TopBar
 					cwd={cwd}
 					onCwdChange={setCwd}
 					onRestart={restart}
+					recentCwds={recentCwds}
 					models={models}
 					modelValue={modelValue}
 					onModelChange={onModelChange}
@@ -1372,11 +1953,20 @@ function App() {
 					thinkingValue={thinkingValue}
 					onThinkingChange={onThinkingChange}
 					status={statusText}
+					isStreaming={isStreaming}
+					queueCount={queueTotal}
 					onNewSession={newSession}
 					onCompact={compact}
 					onExport={exportHtml}
+					onExportMarkdown={exportMarkdown}
+					onExportJson={exportJson}
+					onOpenHelp={() => setHelpOpen(true)}
+					onEnableNotifications={requestNotifications}
+					notificationPermission={notificationPermission}
+					otherTabs={otherTabs}
 					onStop={stopRun}
-					stopDisabled={abortBusy}
+					stopDisabled={stopDisabled}
+					sidebarOpen={sidebarOpen}
 				/>
 				<Transcript
 					messages={messages}
@@ -1384,6 +1974,11 @@ function App() {
 					toolResults={toolResults}
 					notice={notice}
 					onCopyError={toast}
+					onNotify={toast}
+					onFork={forkAction}
+					onRegenerate={regenerateAction}
+					isStreaming={isStreaming}
+					sessionKey={sessionFile}
 				/>
 				<Composer
 					banner={banner}
@@ -1415,10 +2010,23 @@ function App() {
 					onBehaviorChange={setBehaviorState}
 					stats={stats}
 					onSubmit={() => void submit()}
+					isStreaming={isStreaming}
+					queueCount={queueTotal}
+					contextPercent={contextPercent}
+					onStop={() => void stopRun()}
+					onCompact={compact}
+					stopBusy={abortBusy}
 				/>
 			</SidebarInset>
 			<DialogHost modal={modal} onClose={closeModal} />
-			<Toaster theme="dark" position="bottom-right" richColors closeButton />
+			<CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} items={paletteItems} />
+			<HelpDialog open={helpOpen} onOpenChange={setHelpOpen} />
+			<Toaster
+				position="bottom-right"
+				offset={{ bottom: 180, right: 16 }}
+				richColors
+				closeButton
+			/>
 		</SidebarProvider>
 	);
 }

@@ -1,9 +1,11 @@
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import { cn } from "cn";
 import {
 	AlertCircleIcon,
+	Minimize2Icon,
 	PaperclipIcon,
 	SendIcon,
+	SquareIcon,
 	XIcon,
 } from "lucide-react";
 
@@ -52,22 +54,45 @@ export default function Composer({
 	onBehaviorChange,
 	stats,
 	onSubmit,
+	isStreaming = false,
+	queueCount = 0,
+	contextPercent = 0,
+	onStop,
+	onCompact,
+	stopBusy = false,
 }) {
 	const fileInputRef = useRef(null);
+	const [dragActive, setDragActive] = useState(false);
+	const sendLabel = isStreaming ? (behavior === "steer" ? "Steer" : "Antre") : "Kirim";
 
 	return (
 		<footer
-			className="composer shrink-0 border-t border-border/70 bg-background/95 px-4 py-3 backdrop-blur"
+			className={cn(
+				"composer relative shrink-0 border-t border-border/70 bg-background/95 px-4 py-3 backdrop-blur",
+				dragActive && "drop-active",
+			)}
 			onDragOver={(event) => {
-				if (event.dataTransfer?.types.includes("Files")) event.preventDefault();
+				if (!event.dataTransfer?.types.includes("Files")) return;
+				event.preventDefault();
+				setDragActive(true);
+			}}
+			onDragLeave={(event) => {
+				if (event.currentTarget.contains(event.relatedTarget)) return;
+				setDragActive(false);
 			}}
 			onDrop={(event) => {
 				const files = [...(event.dataTransfer?.files ?? [])];
+				setDragActive(false);
 				if (files.length === 0) return;
 				event.preventDefault();
 				onDropFiles(files);
 			}}
 		>
+			{dragActive ? (
+				<div className="pointer-events-none absolute inset-2 z-10 flex items-center justify-center rounded-lg border-2 border-dashed border-primary bg-background/80 text-sm font-medium text-primary">
+					Lepaskan gambar untuk melampirkan
+				</div>
+			) : null}
 			<div className="mx-auto flex w-full max-w-4xl flex-col gap-2">
 				<div id="banner" className={banner ? "" : "hidden"}>
 					<Alert
@@ -108,9 +133,9 @@ export default function Composer({
 						<Badge
 							key={`steer-${index}`}
 							variant="outline"
-							className="chip steer h-5 max-w-full border-amber-500/30 bg-amber-500/5 px-2 text-[10.5px] font-normal text-amber-300"
+							className="chip steer h-5 max-w-full border-amber-500/30 bg-amber-500/10 px-2 text-[10.5px] font-normal text-amber-700 dark:text-amber-300"
 						>
-							steer · {truncate(text, 90)}
+							Steer · {truncate(text, 90)}
 						</Badge>
 					))}
 					{queue.followUp.map((text, index) => (
@@ -119,7 +144,7 @@ export default function Composer({
 							variant="secondary"
 							className="chip h-5 max-w-full px-2 text-[10.5px] font-normal"
 						>
-							follow-up · {truncate(text, 90)}
+							Follow-up · {truncate(text, 90)}
 						</Badge>
 					))}
 					{queue.unknown > 0 ? (
@@ -145,6 +170,11 @@ export default function Composer({
 						<div
 							className="attachment relative overflow-hidden rounded-lg border border-border bg-muted/40"
 							key={`${item.mimeType}-${index}`}
+							title={
+								item.size
+									? `${item.mimeType} · ${Math.round(item.size / 1024)} KB`
+									: item.mimeType
+							}
 						>
 							<img src={item.preview} alt={item.mimeType} />
 							<Button
@@ -177,7 +207,7 @@ export default function Composer({
 									)}
 									onSelect={() => onApplySlash(command)}
 								>
-									<span className="cmd shrink-0 font-mono text-xs text-primary">
+									<span className="cmd shrink-0 font-mono text-xs text-rose-700 dark:text-primary">
 										/{command.name}
 									</span>
 									<span className="desc min-w-0 flex-1 truncate text-xs text-muted-foreground">
@@ -192,6 +222,26 @@ export default function Composer({
 					</Command>
 				</div>
 
+				{contextPercent >= 80 ? (
+					<Alert className="flex items-center gap-2 border-amber-500/40 bg-amber-500/10 py-2">
+						<AlertCircleIcon className="size-4 shrink-0 text-amber-600 dark:text-amber-300" />
+						<AlertDescription className="min-w-0 flex-1 text-xs text-amber-800 dark:text-amber-200">
+							Konteks sudah {Math.round(contextPercent)}%. Ringkas percakapan agar
+							tidak kehabisan ruang.
+						</AlertDescription>
+						<Button
+							type="button"
+							size="xs"
+							variant="outline"
+							className="shrink-0 gap-1"
+							onClick={onCompact}
+						>
+							<Minimize2Icon className="size-3" />
+							Compact
+						</Button>
+					</Alert>
+				) : null}
+
 				<div className="rounded-xl border border-input bg-card shadow-sm transition-shadow focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/20">
 					<Textarea
 						id="input"
@@ -205,7 +255,12 @@ export default function Composer({
 						onPaste={onPaste}
 					/>
 					<div className="flex items-center gap-2 border-t border-border/70 px-2 py-1.5">
-						<div className="w-[110px] shrink-0">
+						<div
+							className={cn(
+								"w-[110px] shrink-0",
+								!isStreaming && queueCount === 0 && "hidden",
+							)}
+						>
 							<NativeSelect
 								id="behavior"
 								size="sm"
@@ -213,9 +268,10 @@ export default function Composer({
 								title="Perilaku saat agent sedang berjalan"
 								value={behavior}
 								onChange={(event) => onBehaviorChange(event.target.value)}
+								tabIndex={!isStreaming && queueCount === 0 ? -1 : undefined}
 							>
-								<NativeSelectOption value="followUp">follow-up</NativeSelectOption>
-								<NativeSelectOption value="steer">steer</NativeSelectOption>
+								<NativeSelectOption value="followUp">Follow-up</NativeSelectOption>
+								<NativeSelectOption value="steer">Steer</NativeSelectOption>
 							</NativeSelect>
 						</div>
 						<span
@@ -250,28 +306,48 @@ export default function Composer({
 							</TooltipTrigger>
 							<TooltipContent side="top">Lampirkan gambar</TooltipContent>
 						</Tooltip>
+						{isStreaming ? (
+							<Button
+								id="composer-stop"
+								type="button"
+								size="icon-sm"
+								variant="outline"
+								className="text-destructive"
+								title="Hentikan run (Esc)"
+								aria-label="Hentikan run"
+								disabled={stopBusy}
+								onClick={onStop}
+							>
+								<SquareIcon className="size-3.5" />
+							</Button>
+						) : null}
 						<Button
 							id="send"
 							type="button"
 							size="sm"
 							className="primary gap-1.5"
 							onClick={onSubmit}
+							title={
+								isStreaming
+									? "Kirim ke queue agent yang sedang berjalan"
+									: "Kirim pesan (Enter)"
+							}
 						>
 							<SendIcon className="size-3.5" />
-							kirim
+							{sendLabel}
 						</Button>
 					</div>
 				</div>
 
 				<div className="hidden items-center gap-1.5 text-[11px] text-muted-foreground sm:flex">
 					<Kbd>Enter</Kbd>
-					<span>kirim</span>
+					<span>{isStreaming ? "Antre" : "Kirim"}</span>
 					<Kbd>Shift</Kbd>
 					<span>+</span>
 					<Kbd>Enter</Kbd>
-					<span>baris baru</span>
+					<span>Baris Baru</span>
 					<Kbd>Esc</Kbd>
-					<span>stop</span>
+					<span>Stop</span>
 					<span className="ml-auto font-mono text-muted-foreground/70">/ command</span>
 				</div>
 			</div>
